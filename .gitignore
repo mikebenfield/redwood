@@ -1,0 +1,6 @@
+target/
+**/*.rs.bk
+euphrates/Cargo.lock
+.vscode
+.DS_Store
+.projectile
