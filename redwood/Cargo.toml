@@ -2,5 +2,14 @@
 name = "redwood"
 version = "0.1.0"
 authors = ["Michael Benfield <mike.benfield@gmail.com>"]
+build = "build.rs"
+
+[features]
+asm = []
 
 [dependencies]
+failure = "0.1.1"
+rand = "0.5"
+
+[build-dependencies]
+cc = "1.0.17"
