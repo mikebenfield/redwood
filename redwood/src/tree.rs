@@ -1,7 +1,8 @@
 use std::fmt;
 
+use rand::distributions::Standard;
 use rand::prng::XorShiftRng;
-use rand::Rng;
+use rand::{FromEntropy, Rng};
 
 use data::TrainingData;
 use f16::F16;
@@ -36,8 +37,8 @@ impl fmt::Display for Block {
         let nodes = &self.nodes;
         let mut s = "".to_owned();
         write!(s, "Block[")?;
-        for i in 0..7 {
-            if self.next_blocks & (1 << 25) << i != 0 {
+        for i in 0..16 {
+            if self.flags & 1 << i != 0 {
                 write!(s, "Branch({}, {}), ", nodes[i].threshold, nodes[i].feature)?;
             } else {
                 write!(s, "Leaf({}), ", nodes[i].feature)?;
@@ -55,19 +56,82 @@ pub struct Tree {
     blocks: Box<[Block]>,
 }
 
-// pub struct TreeConfiguration {
-//     min_samples_split: u32,
-//     split_tries: usize,
-//     rng: Option<XorShiftRng>,
-// }
+pub struct TreeConfiguration {
+    min_samples_split: usize,
+    split_tries: usize,
+    leaf_probability: f32,
+}
+
+impl TreeConfiguration {
+    pub fn new() -> Self {
+        TreeConfiguration {
+            min_samples_split: 2,
+            split_tries: 10,
+            leaf_probability: 0.0,
+        }
+    }
+
+    /// What's the minimum number of samples left so that we still split a node?
+    ///
+    /// Default 2, and if you set less than 2 will silently use 2 instead.
+    pub fn min_samples_split(&mut self, x: usize) {
+        use std::cmp::max;
+        self.min_samples_split = max(x, 2);
+    }
+
+    /// How many different possible splits should we consider at each node we're
+    /// splitting on?
+    ///
+    /// Empirically, sqrt(feature_count) works well.
+    ///
+    /// Default is 10. If you set 0, will silently use 1 instead.
+    pub fn split_tries(&mut self, x: usize) {
+        use std::cmp::max;
+        self.split_tries = max(x, 1);
+    }
+
+    /// Each time we're about to split, with probability `x` just make
+    /// a leaf node instead.
+    ///
+    /// Will silently clamp `x` to between 0 and 1.
+    pub fn leaf_probability(&mut self, x: f32) {
+        self.leaf_probability = x.min(1.0).max(0.0);
+    }
+
+    pub fn build(&self, data: &TrainingData) -> Tree {
+        let mut indices: Vec<u32> = (0..data.sample_count() as u32).collect();
+        let mut rng = XorShiftRng::from_entropy();
+        let mut label_buffer = vec![0u16; data.labels().len()];
+        self.build_full(data, &mut indices, &mut rng, &mut label_buffer)
+    }
+
+    pub fn build_full(
+        &self,
+        data: &TrainingData,
+        indices: &mut [u32],
+        rng: &mut XorShiftRng,
+        label_buffer: &mut [u16],
+    ) -> Tree {
+        TreeBuilder {
+            rng,
+            data,
+            min_samples_split: self.min_samples_split,
+            split_tries: self.split_tries,
+            blocks: Vec::new(),
+            label_buffer,
+            leaf_probability: self.leaf_probability,
+        }.build(indices)
+    }
+}
 
 struct TreeBuilder<'a> {
-    rng: XorShiftRng,
+    rng: &'a mut XorShiftRng,
     data: &'a TrainingData,
     min_samples_split: usize,
     split_tries: usize,
     blocks: Vec<Block>,
-    label_buffer: Box<[u16]>,
+    label_buffer: &'a mut [u16],
+    leaf_probability: f32,
 }
 
 struct BranchData {
@@ -82,65 +146,90 @@ enum SplitResult {
     Branch(BranchData),
 }
 
+struct BlockData<'a> {
+    indices: &'a mut [u32],
+    nonconstant_features: Vec<u16>,
+}
+
 impl<'a> TreeBuilder<'a> {
-    fn build(self) -> Tree {
-        unimplemented!();
-    }
-
-    //                 0
-    //          1            2
-    //       3    4       5      6
-    //     7  8  9 10   11 12  13 14
-    fn new_block(&mut self, nonconstant_features: Vec<u16>, indices: &mut [u32], at: usize) {
-        let sz = self.blocks.len() - at;
-        if sz >= 0x10000 {
-            panic!("Can't fit offset into u16: {}", sz);
+    fn build(mut self, indices: &mut [u32]) -> Tree {
+        let nonconstant_features: Vec<u16> = (0..self.data.feature_count() as u16).collect();
+        self.blocks.push(Default::default());
+        self.new_block(nonconstant_features, indices, 0);
+        Tree {
+            blocks: self.blocks.into_boxed_slice(),
         }
-        block.next_blocks = sz as u16;
-        self.new_node(nonconstant_features, indices, &mut self.blocks[at], 0);
     }
 
-    fn new_node(
+    fn new_block<'b>(&mut self, nonconstant_features: Vec<u16>, indices: &'b mut [u32], at: usize) {
+        let block_len = self.blocks.len();
+        let offset = block_len - at;
+        if offset >= 0x10000 {
+            panic!("Can't fit offset into u16: {}", offset);
+        }
+        self.blocks[at].next_blocks = offset as u16;
+        let mut block_data: Vec<BlockData<'b>> = Vec::new();
+        self.new_node(nonconstant_features, indices, at, 0, &mut block_data);
+        self.blocks
+            .resize(block_len + block_data.len(), Default::default());
+        for (i, bd) in block_data.drain(..).enumerate() {
+            self.new_block(bd.nonconstant_features, bd.indices, block_len + i);
+        }
+    }
+
+    fn new_node<'b>(
         &mut self,
         nonconstant_features: Vec<u16>,
-        indices: &mut [u32],
-        block: &mut Block,
+        indices: &'b mut [u32],
+        at: usize,
         index: usize,
+        block_data: &mut Vec<BlockData<'b>>,
     ) {
         match self.try_split(nonconstant_features, indices) {
-            SplitResult::Leaf(node) => block.nodes[index] = node,
+            SplitResult::Leaf(node) => self.blocks[at].nodes[index] = node,
             SplitResult::Branch(bd) => {
-                block.nodes[index] = bd.node;
-                block.flags |= 1 << index;
+                self.blocks[at].nodes[index] = bd.node;
+                self.blocks[at].flags |= 1 << index;
                 let (left_is, right_is) = indices.split_at_mut(bd.mid);
                 if index < 7 {
-                    self.new_node(bd.left_nonconstant_features, left_is, block, 2 * index);
+                    self.new_node(
+                        bd.left_nonconstant_features,
+                        left_is,
+                        at,
+                        2 * index,
+                        block_data,
+                    );
                     self.new_node(
                         bd.right_nonconstant_features,
                         right_is,
-                        block,
+                        at,
                         2 * index + 1,
+                        block_data,
                     );
                 } else {
-                    unimplemented!();
+                    block_data.push(BlockData {
+                        indices: left_is,
+                        nonconstant_features: bd.left_nonconstant_features,
+                    });
+                    block_data.push(BlockData {
+                        indices: right_is,
+                        nonconstant_features: bd.right_nonconstant_features,
+                    });
                 }
             }
         }
     }
 
     fn try_split(&mut self, nonconstant_features: Vec<u16>, indices: &mut [u32]) -> SplitResult {
-        // Leaf if all features are constant, we don't have enough samples, or
-        // all labels are constant.
-        if nonconstant_features.len() == 0 {
-            return SplitResult::Leaf(self.create_leaf(indices));
-        }
-        if indices.len() < self.min_samples_split {
-            return SplitResult::Leaf(self.create_leaf(indices));
-        }
         let label0 = self.data.labels()[indices[0] as usize];
-        if indices
-            .iter()
-            .all(|i| label0 == self.data.labels()[*i as usize])
+        // Leaf if all features are constant, we don't have enough samples,
+        // our random chance is triggered, or all labels are constant.
+        if nonconstant_features.len() == 0
+            || indices.len() < self.min_samples_split
+            || self.rng.sample::<f32, Standard>(Standard) < self.leaf_probability
+            || indices
+                .iter()
+                .all(|i| label0 == self.data.labels()[*i as usize])
         {
             return SplitResult::Leaf(self.create_leaf(indices));
         }
@@ -241,7 +330,7 @@ impl<'a> TreeBuilder<'a> {
             while i + 1 < indices.len() && values[indices[i + 1] as usize] < threshold {
                 i += 1;
             }
-            while j >= 0 && values[indices[j - 1] as usize] >= threshold {
+            while j > 0 && values[indices[j - 1] as usize] >= threshold {
                 j -= 1;
             }
             if i < j {
@@ -292,4 +381,20 @@ impl<'a> TreeBuilder<'a> {
     }
 }
 
-// fn build_tree(data: &TrainingData,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f() {
+        let x_array = [0.0f32, 1.0, 2.0, 3.0];
+        let mut x_array2: [F16; 4] = Default::default();
+        F16::from_f32_slice(&mut x_array2, &x_array);
+        let labels = [0u16, 0, 1, 1];
+        let data = TrainingData::new(Box::new(x_array2), Box::new(labels)).unwrap();
+        let tree = TreeConfiguration::new().build(&data);
+        for block in tree.blocks.iter() {
+            println!("{}", block);
+        }
+    }
+}
