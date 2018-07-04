@@ -100,10 +100,17 @@ impl Tree {
     }
 }
 
+#[derive(Clone, PartialEq)]
 pub struct TreeConfiguration {
     min_samples_split: usize,
     split_tries: usize,
     leaf_probability: f32,
+}
+
+impl Default for TreeConfiguration {
+    fn default() -> Self {
+        TreeConfiguration::new()
+    }
 }
 
 impl TreeConfiguration {
@@ -118,9 +125,10 @@ impl TreeConfiguration {
     /// What's the minimum number of samples left so that we still split a node?
     ///
     /// Default 2, and if you set less than 2 will silently use 2 instead.
-    pub fn min_samples_split(&mut self, x: usize) {
+    pub fn min_samples_split(&mut self, x: usize) -> &mut Self {
         use std::cmp::max;
         self.min_samples_split = max(x, 2);
+        self
     }
 
     /// How many different possible splits should we consider at each node we're
@@ -129,27 +137,29 @@ impl TreeConfiguration {
     /// Empirically, sqrt(feature_count) works well.
     ///
     /// Default is 10. If you set 0, will silently use 1 instead.
-    pub fn split_tries(&mut self, x: usize) {
+    pub fn split_tries(&mut self, x: usize) -> &mut Self {
         use std::cmp::max;
         self.split_tries = max(x, 1);
+        self
     }
 
     /// Each time we're about to split, with probability `x` just make
     /// a leaf node instead.
     ///
     /// Will silently clamp `x` to between 0 and 1.
-    pub fn leaf_probability(&mut self, x: f32) {
+    pub fn leaf_probability(&mut self, x: f32) -> &mut Self {
         self.leaf_probability = x.min(1.0).max(0.0);
+        self
     }
 
-    pub fn build(&self, data: &TrainingData) -> Tree {
+    pub fn grow(&self, data: &TrainingData) -> Tree {
         let mut indices: Vec<u32> = (0..data.sample_count() as u32).collect();
         let mut rng = XorShiftRng::from_entropy();
         let mut label_buffer = vec![0u16; data.labels().len()];
-        self.build_full(data, &mut indices, &mut rng, &mut label_buffer)
+        self.grow_full(data, &mut indices, &mut rng, &mut label_buffer)
     }
 
-    pub fn build_full(
+    pub fn grow_full(
         &self,
         data: &TrainingData,
         indices: &mut [u32],

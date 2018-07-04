@@ -12,6 +12,7 @@ extern crate rand;
 
 pub mod data;
 pub mod f16;
+pub mod forest;
 pub mod tree;
 
 #[cfg(test)]
