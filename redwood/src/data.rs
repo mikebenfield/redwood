@@ -195,7 +195,6 @@ fn parse_floats_and_label(
     buf2.push(label);
     for s0 in iter {
         let x = str::parse::<f32>(s0).map_err(|_| DataError::NumberParsing(lineno))?;
-        println!("o {}", x);
         buf.push(x);
     }
     Ok(())

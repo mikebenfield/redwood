@@ -47,7 +47,7 @@ impl F16 {
         let mut i = 0usize;
         while i + 8 <= len {
             unsafe {
-                redwood_avx2_to_f32_8(&mut destination[0], &source[0]);
+                redwood_avx2_to_f32_8(&mut destination[i], &source[i]);
             }
             i += 8;
         }
@@ -55,16 +55,11 @@ impl F16 {
         if i < len {
             let mut destination_array: [f32; 8] = [0.0; 8];
             let mut source_array: [F16; 8] = [Default::default(); 8];
-            destination_array[0 .. len - i].copy_from_slice(
-                &destination[i ..]
-            );
-            source_array[0 .. len - i].copy_from_slice(
-                &source[i ..]
-            );
+            source_array[0..len - i].copy_from_slice(&source[i..]);
             unsafe {
                 redwood_avx2_to_f32_8(&mut destination_array[0], &source_array[0]);
             }
-            destination[i ..].copy_from_slice(&destination_array[0 .. len - i]);
+            destination[i..].copy_from_slice(&destination_array[0..len - i]);
         }
     }
 
@@ -90,16 +85,11 @@ impl F16 {
         if i < len {
             let mut destination_array: [F16; 8] = [Default::default(); 8];
             let mut source_array: [f32; 8] = [0.0; 8];
-            destination_array[0 .. len - i].copy_from_slice(
-                &destination[i ..]
-            );
-            source_array[0 .. len - i].copy_from_slice(
-                &source[i ..]
-            );
+            source_array[0..len - i].copy_from_slice(&source[i..]);
             unsafe {
-                redwood_avx2_to_f16_8(&mut destination_array[i], &source_array[i]);
+                redwood_avx2_to_f16_8(&mut destination_array[0], &source_array[0]);
             }
-            destination[i ..].copy_from_slice(&destination_array[0 .. len - i]);
+            destination[i..].copy_from_slice(&destination_array[0..len - i]);
         }
     }
 
@@ -116,8 +106,6 @@ impl F16 {
         F16::from_f32_slice(&mut dest, &source);
         dest[0]
     }
-
-
 }
 
 #[cfg(test)]
@@ -126,9 +114,22 @@ mod tests {
 
     #[test]
     fn conversion() {
-        let f32_array = [0.5f32, 0.25f32, 0.125f32, 0.0625f32, 0.0];
-        let mut f16_array: [F16; 5] = Default::default();
-        let mut f32_array_dest = [0.5f32, 0.25f32, 0.125f32, 0.0625f32, 0.0];
+        let f32_array = [0.5f32, 0.25f32, 0.125f32, 0.0625f32, 3.0, 4.0, 5.0];
+        let mut f16_array: [F16; 7] = Default::default();
+        let mut f32_array_dest: [f32; 7] = Default::default();
+        F16::from_f32_slice(&mut f16_array, &f32_array);
+        F16::to_f32_slice(&mut f32_array_dest, &f16_array);
+        assert_eq!(f32_array_dest, f32_array);
+    }
+
+    #[test]
+    fn conversion_longer() {
+        let f32_array = [
+            0.5f32, 0.25f32, 0.125f32, 0.0625f32, 1.0, -0.5, -2.0, -3.0, -4.0, -5.0, -6.0, -7.0,
+            -8.0,
+        ];
+        let mut f16_array: [F16; 13] = Default::default();
+        let mut f32_array_dest: [f32; 13] = Default::default();
         F16::from_f32_slice(&mut f16_array, &f32_array);
         F16::to_f32_slice(&mut f32_array_dest, &f16_array);
         assert_eq!(f32_array_dest, f32_array);

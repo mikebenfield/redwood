@@ -4,7 +4,7 @@ use rand::distributions::Standard;
 use rand::prng::XorShiftRng;
 use rand::{FromEntropy, Rng};
 
-use data::TrainingData;
+use data::{PredictingData, TrainingData};
 use f16::F16;
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
@@ -37,7 +37,7 @@ impl fmt::Display for Block {
         let nodes = &self.nodes;
         let mut s = "".to_owned();
         write!(s, "Block[")?;
-        for i in 0..16 {
+        for i in 0..nodes.len() {
             if self.flags & 1 << i != 0 {
                 write!(s, "Branch({}, {}), ", nodes[i].threshold, nodes[i].feature)?;
             } else {
@@ -54,6 +54,50 @@ impl fmt::Display for Block {
 #[derive(Clone, Debug, Default, Hash, Eq, PartialEq)]
 pub struct Tree {
     blocks: Box<[Block]>,
+}
+
+impl Tree {
+    pub fn predict(&self, data: &PredictingData) -> Box<[u16]> {
+        let mut buffer = vec![0u16; data.sample_count()].into_boxed_slice();
+        self.predict_full(data, &mut buffer);
+        buffer
+    }
+
+    pub fn predict_full(&self, data: &PredictingData, buffer: &mut [u16]) {
+        for i in 0..data.sample_count() {
+            let sample = data.sample(i as u32);
+            buffer[i] = self.predict_in_block(sample, 0);
+        }
+    }
+
+    fn predict_in_block(&self, sample: &[F16], at: usize) -> u16 {
+        let block = self.blocks[at];
+        let mut node_index = 0usize;
+        loop {
+            let node = block.nodes[node_index];
+            if block.flags & (1 << node_index) == 0 {
+                return node.feature;
+            }
+            let go_left = sample[node.feature as usize] < node.threshold;
+            if node_index < 7 {
+                node_index = 2 * node_index + if go_left { 1 } else { 2 };
+            } else {
+                // we need to go to another block
+                let child_blocks = at + block.next_blocks as usize;
+                let mut offset = if go_left { 0 } else { 1 };
+                for i in 7..node_index as u16 {
+                    if block.flags & (1 << i) != 0 {
+                        offset += 2;
+                    }
+                }
+                println!(
+                    "at {}, offset {}, idex {}, flags {:b}",
+                    at, offset, node_index, block.flags
+                );
+                return self.predict_in_block(sample, child_blocks + offset);
+            }
+        }
+    }
 }
 
 pub struct TreeConfiguration {
@@ -196,14 +240,14 @@ impl<'a> TreeBuilder<'a> {
                         bd.left_nonconstant_features,
                         left_is,
                         at,
-                        2 * index,
+                        2 * index + 1,
                         block_data,
                     );
                     self.new_node(
                         bd.right_nonconstant_features,
                         right_is,
                         at,
-                        2 * index + 1,
+                        2 * index + 2,
                         block_data,
                     );
                 } else {
@@ -223,7 +267,8 @@ impl<'a> TreeBuilder<'a> {
     fn try_split(&mut self, nonconstant_features: Vec<u16>, indices: &mut [u32]) -> SplitResult {
         let label0 = self.data.labels()[indices[0] as usize];
         // Leaf if all features are constant, we don't have enough samples,
-        // our random chance is triggered, or all labels are constant.
+        // our random leaf probability is triggered, or all labels are constant.
+
         if nonconstant_features.len() == 0
             || indices.len() < self.min_samples_split
             || self.rng.sample::<f32, Standard>(Standard) < self.leaf_probability
@@ -262,6 +307,7 @@ impl<'a> TreeBuilder<'a> {
                     indices
                 },
             );
+
             if score > best_score {
                 best_is_argument = !best_is_argument;
                 best_threshold = threshold;
@@ -322,40 +368,45 @@ impl<'a> TreeBuilder<'a> {
         let sample = *self.rng.choose(indices).unwrap();
         let values = self.data.feature(feature);
         let threshold = values[sample as usize];
-        let mut i = 0usize;
-        let mut j = indices.len() - 1;
-        // invariant: everything in [0, i) is less than threshold
-        // everything in (j, end] is >= threshold
-        loop {
-            while i + 1 < indices.len() && values[indices[i + 1] as usize] < threshold {
+        let mut i = 0isize;
+        let mut j = indices.len() as isize - 1;
+
+        // partition `indices` like Hoare partitioning
+        // invariants:
+        // indices in [0, i) belong on the left
+        // indices in (j, end] belong on the right
+        while i < j {
+            while i < indices.len() as isize && values[indices[i as usize] as usize] < threshold {
                 i += 1;
             }
-            while j > 0 && values[indices[j - 1] as usize] >= threshold {
+            while j >= 0 && values[indices[j as usize] as usize] >= threshold {
                 j -= 1;
             }
             if i < j {
-                indices.swap(i, j);
+                indices.swap(i as usize, j as usize);
             } else {
                 break;
             }
         }
-        let (a, b) = indices.split_at(i);
+
+        let (a, b) = indices.split_at(i as usize);
         let score = self.gini_score(a, b);
-        return (threshold, feature, i, score);
+        return (threshold, feature, i as usize, score);
     }
 
     /// Rather than computing the full Gini gain, we just compute
     /// sum |S_i| / |S| - |S| for each side of the split.
     fn gini_score(&mut self, indices_left: &[u32], indices_right: &[u32]) -> f64 {
-        for i in 0..self.label_buffer.len() {
-            self.label_buffer[i] = 0;
-        }
-
         let mut score = 0f64;
+        let labels = self.data.labels();
 
         for indices in [indices_left, indices_right].iter() {
+            for i in 0..self.label_buffer.len() {
+                self.label_buffer[i] = 0;
+            }
+
             for i in indices.iter() {
-                self.label_buffer[*i as usize] += 1;
+                self.label_buffer[labels[*i as usize] as usize] += 1;
             }
             let mut total = 0u64;
             let mut accum = 0u64;
@@ -363,6 +414,10 @@ impl<'a> TreeBuilder<'a> {
                 let j = *i as u64;
                 total += j;
                 accum += j * j;
+            }
+            if total == 0 {
+                use std::f64::NEG_INFINITY;
+                return NEG_INFINITY;
             }
             let total_f = total as f64;
             score += accum as f64 / total_f - total_f;
@@ -386,15 +441,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn f() {
-        let x_array = [0.0f32, 1.0, 2.0, 3.0];
-        let mut x_array2: [F16; 4] = Default::default();
+    fn simple() {
+        use std::ops::Deref;
+        let x_array = [0.0f32, 1.0, 2.0, 3.0, 4.0, -5.0, 10.0];
+        let mut x_array2: [F16; 7] = Default::default();
         F16::from_f32_slice(&mut x_array2, &x_array);
-        let labels = [0u16, 0, 1, 1];
+        let labels = [0u16, 0, 1, 1, 1, 0, 0];
         let data = TrainingData::new(Box::new(x_array2), Box::new(labels)).unwrap();
         let tree = TreeConfiguration::new().build(&data);
-        for block in tree.blocks.iter() {
-            println!("{}", block);
-        }
+        let test_data = [F16::from_f32(3.0), F16::from_f32(-10.0), F16::from_f32(4.0)];
+        let pred_data = PredictingData::new(Box::new(test_data), 3).unwrap();
+        let results = [1u16, 0u16, 1u16];
+        let predictions = tree.predict(&pred_data);
+        assert_eq!(&results, predictions.deref());
+    }
+
+    #[test]
+    fn larger() {
+        use std::ops::Deref;
+        use std::path::PathBuf;
+
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("resources/test/sample_train2.txt");
+        let data = TrainingData::parse(&d).unwrap();
+        let mut d2 = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d2.push("resources/test/sample_pred2.txt");
+        let pred_data = PredictingData::parse(&d2).unwrap();
+        let tree = TreeConfiguration::new().build(&data);
+        let predictions = tree.predict(&pred_data);
+        let targets = [0u16, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0];
+        assert_eq!(&targets, predictions.deref());
     }
 }
