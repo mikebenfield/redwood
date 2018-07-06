@@ -155,7 +155,7 @@ impl TreeConfiguration {
     pub fn grow(&self, data: &TrainingData) -> Tree {
         let mut indices: Vec<u32> = (0..data.sample_count() as u32).collect();
         let mut rng = XorShiftRng::from_entropy();
-        let mut label_buffer = vec![0u16; data.labels().len()];
+        let mut label_buffer = vec![0; data.labels().len()];
         self.grow_full(data, &mut indices, &mut rng, &mut label_buffer)
     }
 
@@ -164,7 +164,7 @@ impl TreeConfiguration {
         data: &TrainingData,
         indices: &mut [u32],
         rng: &mut XorShiftRng,
-        label_buffer: &mut [u16],
+        label_buffer: &mut [u32],
     ) -> Tree {
         TreeBuilder {
             rng,
@@ -184,7 +184,7 @@ struct TreeBuilder<'a> {
     min_samples_split: usize,
     split_tries: usize,
     blocks: Vec<Block>,
-    label_buffer: &'a mut [u16],
+    label_buffer: &'a mut [u32],
     leaf_probability: f32,
 }
 

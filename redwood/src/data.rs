@@ -36,8 +36,8 @@ impl From<io::Error> for DataError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrainingData {
     max_label: u16,
-    n_features: u16,
-    n_samples: u32,
+    max_feature: u16,
+    max_sample: u32,
     x: Box<[F16]>,
     y: Box<[u16]>,
 }
@@ -138,8 +138,8 @@ impl TrainingData {
         let max_label = *y.iter().max().unwrap();
         Ok(TrainingData {
             max_label,
-            n_features: n_features0 as u16,
-            n_samples: n_samples0 as u32,
+            max_feature: (n_features0 - 1) as u16,
+            max_sample: (n_samples0 - 1) as u32,
             x,
             y,
         })
@@ -147,11 +147,16 @@ impl TrainingData {
 
     /// A slice of the `i`th feature, indexed by sample number.
     pub fn feature(&self, i: u16) -> &[F16] {
-        let n_samples = self.n_samples as usize;
+        let n_samples = self.sample_count();
         let index_start = n_samples * (i as usize);
         let index_end = index_start + n_samples;
         &self.x[index_start..index_end]
     }
+
+    pub fn max_label(&self) -> u16 {
+        self.max_label
+    }
+
 
     /// Labels, indexed by sample number.
     pub fn labels(&self) -> &[u16] {
@@ -159,13 +164,13 @@ impl TrainingData {
     }
 
     /// How many features are there in each sample?
-    pub fn feature_count(&self) -> u16 {
-        self.n_features
+    pub fn feature_count(&self) -> usize {
+        self.max_feature as usize + 1
     }
 
     /// How many samples are there?
-    pub fn sample_count(&self) -> u32 {
-        self.n_samples
+    pub fn sample_count(&self) -> usize {
+        self.max_sample as usize + 1
     }
 }
 
@@ -175,8 +180,8 @@ impl TrainingData {
 /// memory and indexed by feature number.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredictingData {
-    max_features: u16,
-    max_samples: u32,
+    max_feature: u16,
+    max_sample: u32,
     x: Box<[F16]>,
 }
 
@@ -290,18 +295,18 @@ impl PredictingData {
             )));
         }
         Ok(PredictingData {
-            max_features: (n_features - 1) as u16,
-            max_samples: (n_samples - 1) as u32,
+            max_feature: (n_features - 1) as u16,
+            max_sample: (n_samples - 1) as u32,
             x,
         })
     }
 
     pub fn feature_count(&self) -> usize {
-        self.max_features as usize + 1
+        self.max_feature as usize + 1
     }
 
     pub fn sample_count(&self) -> usize {
-        self.max_samples as usize + 1
+        self.max_sample as usize + 1
     }
 
     pub fn sample(&self, i: u32) -> &[F16] {

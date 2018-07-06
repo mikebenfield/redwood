@@ -6,6 +6,7 @@
 // <http://opensource.org/licenses/MIT> and
 // <http://www.apache.org/licenses/LICENSE-2.0>.
 
+extern crate crossbeam_utils;
 #[macro_use]
 extern crate failure;
 extern crate rand;
