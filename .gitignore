@@ -1,6 +1,6 @@
 target/
 **/*.rs.bk
-redwood/Cargo.lock
+Cargo.lock
 .vscode
 .DS_Store
 .projectile

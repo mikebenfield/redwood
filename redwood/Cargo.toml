@@ -6,6 +6,7 @@ build = "build.rs"
 
 [features]
 asm = []
+default = ["asm"]
 
 [dependencies]
 failure = "0.1.1"
