@@ -1,0 +1,13 @@
+[package]
+name = "redwood_cli"
+version = "0.1.0"
+authors = ["Michael Benfield <mike.benfield@gmail.com>"]
+
+[[bin]]
+name = "redwood"
+path = "src/main.rs"
+
+[dependencies]
+redwood = { path = "../redwood" }
+failure = "0.1.1"
+clap = "2.31"

@@ -44,10 +44,13 @@ impl TrainingData {
     /// Right now, this parses `f32`s and then converts to `F16`. This is
     /// absolutely the wrong way to do it, but for now it's what I'm
     /// going with for ease of implementation.
-    pub fn parse(p: &AsRef<Path>) -> Result<TrainingData, DataError> {
+    pub fn parse<P: AsRef<Path> + ?Sized>(path: &P) -> Result<TrainingData, DataError> {
+        Self::parse0(path.as_ref())
+    }
+
+    fn parse0(path: &Path) -> Result<TrainingData, DataError> {
         const MAX_BUFF: usize = 0x1000;
 
-        let path = p.as_ref();
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let mut buf_f32: Vec<f32> = Vec::new();
@@ -149,7 +152,6 @@ impl TrainingData {
         self.max_label
     }
 
-
     /// Labels, indexed by sample number.
     pub fn labels(&self) -> &[u16] {
         &self.y
@@ -221,10 +223,13 @@ impl PredictingData {
     /// Right now, this parses `f32`s and then converts to `F16`. This is
     /// absolutely the wrong way to do it, but for now it's what I'm
     /// going with for ease of implementation.
-    pub fn parse(p: &AsRef<Path>) -> Result<PredictingData, DataError> {
+    pub fn parse<P: AsRef<Path> + ?Sized>(path: &P) -> Result<PredictingData, DataError> {
+        Self::parse0(path.as_ref())
+    }
+
+    pub fn parse0(path: &Path) -> Result<PredictingData, DataError> {
         const MAX_BUFF: usize = 0x1000;
 
-        let path = p.as_ref();
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let mut buf_f32: Vec<f32> = Vec::new();

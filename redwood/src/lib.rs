@@ -8,10 +8,7 @@ pub mod f16;
 pub mod forest;
 pub mod tree;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub use data::{PredictingData, TrainingData};
+pub use f16::F16;
+pub use forest::{Forest, ForestConfiguration};
+pub use tree::TreeConfiguration;

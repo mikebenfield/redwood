@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::RwLock;
 
 use crossbeam_utils::scoped;
-use rand::{Rng, SeedableRng, XorShiftRng};
+use rand::{FromEntropy, Rng, SeedableRng, XorShiftRng};
 
 use data::{DataError, PredictingData, TrainingData};
 use tree::{Tree, TreeConfiguration};
@@ -34,11 +34,12 @@ impl Prediction {
         let end = start + feature_count;
         &self.data[start..end]
     }
-}
 
-impl Prediction {
-    pub fn save(&self, p: &AsRef<Path>) -> Result<(), DataError> {
-        let path = p.as_ref();
+    pub fn save<P: AsRef<Path> + ?Sized>(&self, path: &P) -> Result<(), DataError> {
+        self.save0(path.as_ref())
+    }
+
+    pub fn save0(&self, path: &Path) -> Result<(), DataError> {
         let mut file = File::create(path)?;
         for sample_index in 0..self.sample_count() {
             let sample = self.sample(sample_index as u32);
@@ -138,6 +139,11 @@ impl ForestConfiguration {
         }
     }
 
+    pub fn tree_configuration(&mut self, x: TreeConfiguration) -> &mut Self {
+        self.tree_configuration = x;
+        self
+    }
+
     pub fn thread_count(&mut self, x: usize) -> &mut Self {
         use std::cmp::max;
         self.thread_count = max(1, x);
@@ -148,6 +154,11 @@ impl ForestConfiguration {
         use std::cmp::max;
         self.tree_count = max(1, x);
         self
+    }
+
+    pub fn grow_entropy(&self, data: &TrainingData) -> Forest {
+        let mut rng = XorShiftRng::from_entropy();
+        self.grow(data, &mut rng)
     }
 
     pub fn grow(&self, data: &TrainingData, rng: &mut XorShiftRng) -> Forest {
@@ -171,7 +182,6 @@ impl ForestConfiguration {
                     let mut rng0 = XorShiftRng::from_seed(rng.gen());
                     scope.spawn(move || loop {
                         let mut indices: Vec<u32> = (0..data.sample_count() as u32).collect();
-                        let mut label_buffer: Vec<u32> = (0..data.labels().len() as u32).collect();
                         match tree_info_r.write() {
                             Ok(ref mut tree_info_guard) => {
                                 if tree_info_guard.error != None
@@ -187,7 +197,6 @@ impl ForestConfiguration {
                             data,
                             &mut indices,
                             &mut rng0,
-                            &mut label_buffer,
                         );
                         match trees_r.write() {
                             Ok(ref mut trees_guard) => trees_guard.push(tree),
