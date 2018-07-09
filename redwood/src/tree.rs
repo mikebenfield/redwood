@@ -290,7 +290,7 @@ impl<'a> TreeBuilder<'a> {
 
     fn create_branch(
         &mut self,
-        mut nonconstant_features: Vec<u16>,
+        nonconstant_features: Vec<u16>,
         indices: &mut [u32],
     ) -> Option<BranchData> {
         use std::cmp::Ordering;
@@ -317,9 +317,6 @@ impl<'a> TreeBuilder<'a> {
             }
         }
 
-        use std::time::{Duration, Instant};
-        let t1 = Instant::now();
-
         let (threshold, feature, score) = (0..self.split_tries)
             .map(|_| self.random_split(&nonconstant_features, indices))
             .max_by_key(|tuple| FOrd(tuple.2))
@@ -338,7 +335,6 @@ impl<'a> TreeBuilder<'a> {
         let mut i = 0isize;
         let mut j = indices.len() as isize - 1;
 
-        let t2 = Instant::now();
         while i < j {
             while i < indices.len() as isize && values[indices[i as usize] as usize] < threshold {
                 i += 1;
