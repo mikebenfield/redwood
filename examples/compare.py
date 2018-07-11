@@ -13,10 +13,10 @@ def arg_generate(args):
 
     (X, y) = datasets.make_classification(
         n_samples=50000,
-        n_features=100,
-        n_informative=80,
-        n_redundant=10,
-        n_classes=5,
+        n_features=args.n_features,
+        n_informative=int(args.n_features * 0.8),
+        n_redundant=int(args.n_features * 0.1),
+        n_classes=args.n_classes,
     )
     X_test = X[:10000]
     X_train = X[10000:]
@@ -29,7 +29,7 @@ def arg_generate(args):
     train_path = pathlib.Path(directory, 'data.train')
     result_path = pathlib.Path(directory, 'data.target')
 
-    fmt = ['%f']*100 + ['%d']
+    fmt = ['%f']*args.n_features + ['%d']
     np.savetxt(test_path, X_test, delimiter=' ', fmt='%f')
     np.savetxt(result_path, y_test, delimiter=' ', fmt='%d')
     np.savetxt(train_path, train, delimiter=' ', fmt=fmt)
@@ -95,6 +95,8 @@ if __name__ == '__main__':
 
     generate_parser = subparsers.add_parser('generate')
     generate_parser.add_argument('--directory', required=True)
+    generate_parser.add_argument('--n_classes', type=int, required=True)
+    generate_parser.add_argument('--n_features', type=int, required=True)
     generate_parser.set_defaults(func=arg_generate)
 
     train_predict_parser = subparsers.add_parser('train_predict')

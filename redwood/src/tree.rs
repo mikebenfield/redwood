@@ -440,17 +440,12 @@ impl<'a> TreeBuilder<'a> {
         self.make_counts(&labels, &indices, &values, threshold);
 
         let score = self.gini_score();
+
         (threshold, feature, score)
     }
 
     #[inline(always)]
-    fn make_counts(
-        &mut self,
-        labels: &[u16],
-        indices: &[u32],
-        values: &[F16],
-        threshold: F16,
-    ) {
+    fn make_counts(&mut self, labels: &[u16], indices: &[u32], values: &[F16], threshold: F16) {
         for &sample_index in indices.iter() {
             let label = labels[sample_index as usize];
             let feature_value = values[sample_index as usize];
