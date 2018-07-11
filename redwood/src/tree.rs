@@ -150,128 +150,166 @@ impl TreeConfiguration {
 
     pub fn grow(&self, data: &TrainingData) -> Tree {
         let mut indices: Vec<u32> = (0..data.sample_count() as u32).collect();
+        let mut buffer = vec![0u32; data.sample_count()];
         let mut rng = XorShiftRng::from_entropy();
-        self.grow_full(data, &mut indices, &mut rng)
+        let mut counts_left = vec![0u32; data.max_label() as usize + 1];
+        let mut counts_right = vec![0u32; data.max_label() as usize + 1];
+        self.grow_full(
+            data,
+            &mut indices,
+            &mut buffer,
+            &mut counts_left,
+            &mut counts_right,
+            &mut rng,
+        )
     }
 
     pub fn grow_full(
         &self,
         data: &TrainingData,
         indices: &mut [u32],
+        buffer: &mut [u32],
+        counts_left: &mut [u32],
+        counts_right: &mut [u32],
         rng: &mut XorShiftRng,
     ) -> Tree {
+        let features: Vec<u16> = (0..data.feature_count() as u16).collect();
         TreeBuilder {
             rng,
             data,
+            counts_left,
+            counts_right,
             min_samples_split: self.min_samples_split,
             split_tries: self.split_tries,
             blocks: Vec::new(),
             leaf_probability: self.leaf_probability,
-        }.build(indices)
+            features: features.into_boxed_slice(),
+        }.build(indices, buffer)
     }
 }
 
 struct TreeBuilder<'a> {
     rng: &'a mut XorShiftRng,
     data: &'a TrainingData,
+    counts_left: &'a mut [u32],
+    counts_right: &'a mut [u32],
     min_samples_split: usize,
     split_tries: usize,
     blocks: Vec<Block>,
     leaf_probability: f32,
+    features: Box<[u16]>,
 }
 
-struct BranchData {
+struct BranchData<'a> {
     node: Node,
-    mid: usize,
-    left_nonconstant_features: Vec<u16>,
-    right_nonconstant_features: Vec<u16>,
+    indices_left: &'a mut [u32],
+    indices_right: &'a mut [u32],
+    buffer_left: &'a mut [u32],
+    buffer_right: &'a mut [u32],
 }
 
-enum SplitResult {
+enum SplitResult<'a> {
     Leaf(Node),
-    Branch(BranchData),
+    Branch(BranchData<'a>),
 }
 
 struct BlockData<'a> {
     indices: &'a mut [u32],
-    nonconstant_features: Vec<u16>,
+    buffer: &'a mut [u32],
 }
 
 impl<'a> TreeBuilder<'a> {
-    fn build(mut self, indices: &mut [u32]) -> Tree {
-        let nonconstant_features: Vec<u16> = (0..self.data.feature_count() as u16).collect();
+    fn build(mut self, indices: &mut [u32], buffer: &mut [u32]) -> Tree {
         self.blocks.push(Default::default());
-        self.new_block(nonconstant_features, indices, 0);
+        self.new_block(0, indices, buffer, 0);
         Tree {
             blocks: self.blocks.into_boxed_slice(),
         }
     }
 
-    fn new_block<'b>(&mut self, nonconstant_features: Vec<u16>, indices: &'b mut [u32], at: usize) {
+    fn new_block<'b>(
+        &mut self,
+        feature_index: usize,
+        indices: &'b mut [u32],
+        buffer: &'b mut [u32],
+        at: usize,
+    ) {
         let block_len = self.blocks.len();
         let offset = block_len - at;
         if offset >= 0x10000 {
             panic!("Can't fit offset into u16: {}", offset);
         }
         self.blocks[at].next_blocks = offset as u16;
+        let new_feature_index = if indices.len() < self.min_samples_split {
+            feature_index
+        } else {
+            self.find_nonconstant_features(feature_index, indices)
+        };
         let mut block_data: Vec<BlockData<'b>> = Vec::new();
-        self.new_node(nonconstant_features, indices, at, 0, &mut block_data);
+        self.new_node(new_feature_index, indices, buffer, at, 0, &mut block_data);
         self.blocks
             .resize(block_len + block_data.len(), Default::default());
         for (i, bd) in block_data.drain(..).enumerate() {
-            self.new_block(bd.nonconstant_features, bd.indices, block_len + i);
+            self.new_block(new_feature_index, bd.indices, bd.buffer, block_len + i);
         }
     }
 
     fn new_node<'b>(
         &mut self,
-        nonconstant_features: Vec<u16>,
+        feature_index: usize,
         indices: &'b mut [u32],
+        buffer: &'b mut [u32],
         at: usize,
         index: usize,
         block_data: &mut Vec<BlockData<'b>>,
     ) {
-        match self.try_split(nonconstant_features, indices) {
+        match self.try_split(feature_index, indices, buffer) {
             SplitResult::Leaf(node) => self.blocks[at].nodes[index] = node,
             SplitResult::Branch(bd) => {
                 self.blocks[at].nodes[index] = bd.node;
                 self.blocks[at].flags |= 1 << index;
-                let (left_is, right_is) = indices.split_at_mut(bd.mid);
                 if index < 7 {
                     self.new_node(
-                        bd.left_nonconstant_features,
-                        left_is,
+                        feature_index,
+                        bd.indices_left,
+                        bd.buffer_left,
                         at,
                         2 * index + 1,
                         block_data,
                     );
                     self.new_node(
-                        bd.right_nonconstant_features,
-                        right_is,
+                        feature_index,
+                        bd.indices_right,
+                        bd.buffer_right,
                         at,
                         2 * index + 2,
                         block_data,
                     );
                 } else {
                     block_data.push(BlockData {
-                        indices: left_is,
-                        nonconstant_features: bd.left_nonconstant_features,
+                        indices: bd.indices_left,
+                        buffer: bd.buffer_left,
                     });
                     block_data.push(BlockData {
-                        indices: right_is,
-                        nonconstant_features: bd.right_nonconstant_features,
+                        indices: bd.indices_right,
+                        buffer: bd.buffer_right,
                     });
                 }
             }
         }
     }
 
-    fn try_split(&mut self, nonconstant_features: Vec<u16>, indices: &mut [u32]) -> SplitResult {
+    fn try_split<'b>(
+        &mut self,
+        feature_index: usize,
+        indices: &'b mut [u32],
+        buffer: &'b mut [u32],
+    ) -> SplitResult<'b> {
         let label0 = self.data.labels()[indices[0] as usize];
         // Leaf if all features are constant, we don't have enough samples,
         // our random leaf probability is triggered, or all labels are constant.
 
-        if nonconstant_features.len() == 0
+        if feature_index == self.features.len()
             || indices.len() < self.min_samples_split
             || self.rng.sample::<f32, Standard>(Standard) < self.leaf_probability
             || indices
@@ -282,17 +320,15 @@ impl<'a> TreeBuilder<'a> {
         }
 
         // Branch
-        match self.create_branch(nonconstant_features, indices) {
-            None => return SplitResult::Leaf(self.create_leaf(indices)),
-            Some(bd) => return SplitResult::Branch(bd),
-        }
+        return self.create_branch(feature_index, indices, buffer);
     }
 
-    fn create_branch(
+    fn create_branch<'b>(
         &mut self,
-        nonconstant_features: Vec<u16>,
-        indices: &mut [u32],
-    ) -> Option<BranchData> {
+        feature_index: usize,
+        indices: &'b mut [u32],
+        buffer: &'b mut [u32],
+    ) -> SplitResult<'b> {
         use std::cmp::Ordering;
         #[derive(PartialEq)]
         struct FOrd(f64);
@@ -318,114 +354,121 @@ impl<'a> TreeBuilder<'a> {
         }
 
         let (threshold, feature, score) = (0..self.split_tries)
-            .map(|_| self.random_split(&nonconstant_features, indices))
+            .map(|_| self.random_split(feature_index, indices))
             .max_by_key(|tuple| FOrd(tuple.2))
             .unwrap();
 
         if score == NEG_INFINITY {
-            return None;
+            return SplitResult::Leaf(self.create_leaf(indices));
         }
 
         let values = self.data.feature(feature);
 
-        // partition `indices` like Hoare partitioning
-        // invariants:
-        // indices in [0, i) belong on the left
-        // indices in (j, end] belong on the right
-        let mut i = 0isize;
-        let mut j = indices.len() as isize - 1;
-
-        while i < j {
-            while i < indices.len() as isize && values[indices[i as usize] as usize] < threshold {
+        // Partioning into `buffer` instead of doing it in place
+        // allows us to preserve locality of indices, which does
+        // provide a modest performance improvement
+        let mut i = 0;
+        let mut j = indices.len() - 1;
+        for &index in indices.iter() {
+            if values[index as usize] < threshold {
+                buffer[i] = index;
                 i += 1;
-            }
-            while j >= 0 && values[indices[j as usize] as usize] >= threshold {
-                j -= 1;
-            }
-            if i < j {
-                indices.swap(i as usize, j as usize);
             } else {
-                break;
+                buffer[j] = index;
+                j -= 1;
             }
         }
 
-        let left_nonconstant_features = self.find_nonconstant_features(
-            &nonconstant_features, &indices[0..i as usize]);
-        let right_nonconstant_features = self.find_nonconstant_features(
-            &nonconstant_features, &indices[i as usize..]);
+        let (indices_left, indices_right) = buffer.split_at_mut(i);
+        let (buffer_left, buffer_right) = indices.split_at_mut(i);
 
-        return Some(BranchData {
+        return SplitResult::Branch(BranchData {
             node: Node { feature, threshold },
-            mid: i as usize,
-            left_nonconstant_features,
-            right_nonconstant_features,
+            indices_left,
+            indices_right,
+            buffer_left,
+            buffer_right,
         });
     }
 
-    fn find_nonconstant_features(
-        &self,
-        previous_nonconstant_features: &Vec<u16>,
-        indices: &[u32]
-    ) -> Vec<u16> {
-    let is_constant = |slice: &[F16]| -> bool {
-        if indices.len() == 0 {
-            return true;
-        }
-        let first_index = indices[0];
-        let first_value = slice[first_index as usize];
-        if indices[1..]
-            .iter()
-            .all(|&i| slice[i as usize] == first_value)
-        {
-            return true;
-        }
-        return false;
-    };
+    #[inline(never)]
+    fn find_nonconstant_features(&mut self, feature_index: usize, indices: &[u32]) -> usize {
+        let is_constant = |slice: &[F16]| -> bool {
+            if indices.len() == 0 {
+                return true;
+            }
+            let first_index = indices[0];
+            let first_value = slice[first_index as usize];
+            if indices[1..]
+                .iter()
+                .all(|&i| slice[i as usize] == first_value)
+            {
+                return true;
+            }
+            return false;
+        };
 
-    let mut result = Vec::with_capacity(previous_nonconstant_features.len());
-    for &feature_index in previous_nonconstant_features.iter() {
-        let feature = self.data.feature(feature_index);
-        if !is_constant(feature) {
-            result.push(feature_index);
+        let mut j = feature_index;
+        for i in feature_index..self.features.len() {
+            let feature = self.features[i];
+            let values = self.data.feature(feature);
+            if is_constant(values) {
+                self.features.swap(i, j);
+                j += 1;
+            }
         }
-    }
-        result
+
+        j
     }
 
     // returns (threshold, feature_index, score)
-    fn random_split(
-        &mut self,
-        nonconstant_features: &Vec<u16>,
-        indices: &[u32],
-    ) -> (F16, u16, f64) {
-        let feature = *self.rng.choose(nonconstant_features).unwrap();
+    #[inline(never)]
+    fn random_split(&mut self, feature_index: usize, indices: &[u32]) -> (F16, u16, f64) {
+        let feature = *self.rng.choose(&self.features[feature_index..]).unwrap();
         let sample = *self.rng.choose(indices).unwrap();
         let values = self.data.feature(feature);
         let threshold = values[sample as usize];
-        let mut counts_left = vec![0u32; self.data.max_label() as usize + 1];
-        let mut counts_right = vec![0u32; self.data.max_label() as usize + 1];
-
         let labels = self.data.labels();
 
+        for i in self.counts_left.iter_mut() {
+            *i = 0;
+        }
+        for i in self.counts_right.iter_mut() {
+            *i = 0;
+        }
+
+        self.make_counts(&labels, &indices, &values, threshold);
+
+        let score = self.gini_score();
+        (threshold, feature, score)
+    }
+
+    #[inline(always)]
+    fn make_counts(
+        &mut self,
+        labels: &[u16],
+        indices: &[u32],
+        values: &[F16],
+        threshold: F16,
+    ) {
         for &sample_index in indices.iter() {
             let label = labels[sample_index as usize];
             let feature_value = values[sample_index as usize];
             if feature_value < threshold {
-                counts_left[label as usize] += 1;
+                self.counts_left[label as usize] += 1;
             } else {
-                counts_right[label as usize] += 1;
+                self.counts_right[label as usize] += 1;
             }
         }
-        let score = self.gini_score(&counts_left, &counts_right);
-        (threshold, feature, score)
     }
 
     /// Rather than computing the full Gini gain, we just compute
-    /// sum |S_i| / |S| - |S| for each side of the split.
-    fn gini_score(&mut self, counts_left: &[u32], counts_right: &[u32]) -> f64 {
+    /// sum |S_i|^2 / |S| - |S| for each side of the split.
+    #[inline(never)]
+    fn gini_score(&mut self) -> f64 {
         let mut score = 0f64;
 
-        for counts in [counts_left, counts_right].iter() {
+        for counts in [&mut self.counts_left, &mut self.counts_right].iter() {
             let mut total = 0u64;
             let mut accum = 0u64;
             for i in counts.iter() {
@@ -465,7 +508,7 @@ mod tests {
         F16::from_f32_slice(&mut x_array2, &x_array);
         let labels = [0u16, 0, 1, 1, 1, 0, 0];
         let data = TrainingData::new(Box::new(x_array2), Box::new(labels)).unwrap();
-        let tree = TreeConfiguration::new().build(&data);
+        let tree = TreeConfiguration::new().grow(&data);
         let test_data = [F16::from_f32(3.0), F16::from_f32(-10.0), F16::from_f32(4.0)];
         let pred_data = PredictingData::new(Box::new(test_data), 3).unwrap();
         let results = [1u16, 0u16, 1u16];
@@ -484,7 +527,7 @@ mod tests {
         let mut d2 = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d2.push("resources/test/sample_pred2.txt");
         let pred_data = PredictingData::parse(&d2).unwrap();
-        let tree = TreeConfiguration::new().build(&data);
+        let tree = TreeConfiguration::new().grow(&data);
         let predictions = tree.predict(&pred_data);
         let targets = [0u16, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0];
         assert_eq!(&targets, predictions.deref());

@@ -176,12 +176,18 @@ impl ForestConfiguration {
             // them.
             let tree_info_r = &tree_info;
             let trees_r = &trees;
+            let all_indices: Vec<u32> = (0..data.sample_count() as u32).collect();
+            let all_indices_r: &[u32] = &all_indices;
 
             scoped::scope(|scope| {
                 for _ in 0..self.thread_count {
                     let mut rng0 = XorShiftRng::from_seed(rng.gen());
+                    let mut indices: Vec<u32> = vec![0; data.sample_count()];
+                    let mut buffer: Vec<u32> = vec![0; data.sample_count()];
+                    let mut counts_left: Vec<u32> = vec![0; data.max_label() as usize + 1];
+                    let mut counts_right: Vec<u32> = vec![0; data.max_label() as usize + 1];
                     scope.spawn(move || loop {
-                        let mut indices: Vec<u32> = (0..data.sample_count() as u32).collect();
+                        indices.copy_from_slice(all_indices_r);
                         match tree_info_r.write() {
                             Ok(ref mut tree_info_guard) => {
                                 if tree_info_guard.error != None
@@ -196,6 +202,9 @@ impl ForestConfiguration {
                         let tree = self.tree_configuration.grow_full(
                             data,
                             &mut indices,
+                            &mut buffer,
+                            &mut counts_left,
+                            &mut counts_right,
                             &mut rng0,
                         );
                         match trees_r.write() {

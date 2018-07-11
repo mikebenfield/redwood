@@ -6,6 +6,6 @@ fn main() {
     {
         cc::Build::new()
             .file("src/avx_convert.s")
-            .compile("avx_convert")
+            .compile("avx_convert");
     }
 }
