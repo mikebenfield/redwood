@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use clap::{App, Arg, ArgMatches, SubCommand};
 use failure::Error;
 
-use redwood::{Forest, ForestConfiguration, PredictingData, TrainingData, TreeConfiguration};
+use redwood::{ForestConfiguration, PredictingData, TrainingData, TreeConfiguration};
 
 fn duration_secs(duration: &Duration) -> f64 {
     let secs = duration.as_secs() as f64;
