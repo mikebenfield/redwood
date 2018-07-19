@@ -8,20 +8,20 @@ import sklearn.datasets as datasets
 from sklearn.metrics import log_loss, accuracy_score
 from sklearn.ensemble import ExtraTreesClassifier
 
+
 def arg_generate(args):
     directory = args.directory
 
     (X, y) = datasets.make_classification(
-        n_samples=50000,
+        n_samples=args.train_size + args.test_size,
         n_features=args.n_features,
         n_informative=int(args.n_features * 0.8),
         n_redundant=int(args.n_features * 0.1),
-        n_classes=args.n_classes,
-    )
-    X_test = X[:10000]
-    X_train = X[10000:]
-    y_test = y[:10000]
-    y_train = y[10000:]
+        n_classes=args.n_classes, )
+    X_test = X[:args.test_size]
+    X_train = X[args.test_size:]
+    y_test = y[:args.test_size]
+    y_train = y[args.test_size:]
     y_train = y_train[:, np.newaxis]
     train = np.concatenate([X_train, y_train], axis=1)
 
@@ -29,10 +29,11 @@ def arg_generate(args):
     train_path = pathlib.Path(directory, 'data.train')
     result_path = pathlib.Path(directory, 'data.target')
 
-    fmt = ['%f']*args.n_features + ['%d']
+    fmt = ['%f'] * args.n_features + ['%d']
     np.savetxt(test_path, X_test, delimiter=' ', fmt='%f')
     np.savetxt(result_path, y_test, delimiter=' ', fmt='%d')
     np.savetxt(train_path, train, delimiter=' ', fmt=fmt)
+
 
 def arg_train_predict(args):
     directory = args.directory
@@ -53,8 +54,7 @@ def arg_train_predict(args):
         n_estimators=args.tree_count,
         max_features=args.split_tries,
         min_samples_split=args.min_samples_split,
-        n_jobs=args.thread_count
-    )
+        n_jobs=args.thread_count)
     classifier.fit(X_train, y_train)
     time_3 = perf_counter()
     print('{} seconds to train'.format(time_3 - time_2))
@@ -81,12 +81,13 @@ def arg_evaluate(args):
     accuracy = accuracy_score(y_target, y_pred_a)
     print('accuracy: {}'.format(accuracy))
 
-    
+
 def print_usage_and_quit():
     usage = """
 """
     print(usage)
     sys.exit(0)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -95,6 +96,16 @@ if __name__ == '__main__':
 
     generate_parser = subparsers.add_parser('generate')
     generate_parser.add_argument('--directory', required=True)
+    generate_parser.add_argument(
+        '--train_size',
+        type=int,
+        default=40000,
+        help='Number of samples in the training set')
+    generate_parser.add_argument(
+        '--test_size',
+        type=int,
+        default=10000,
+        help='Number of samples in the test set')
     generate_parser.add_argument('--n_classes', type=int, required=True)
     generate_parser.add_argument('--n_features', type=int, required=True)
     generate_parser.set_defaults(func=arg_generate)
@@ -103,8 +114,10 @@ if __name__ == '__main__':
     train_predict_parser.add_argument('--directory', required=True)
     train_predict_parser.add_argument('--prediction_file', required=True)
     train_predict_parser.add_argument('--tree_count', type=int, required=True)
-    train_predict_parser.add_argument('--thread_count', type=int, required=True)
-    train_predict_parser.add_argument('--min_samples_split', type=int, required=True)
+    train_predict_parser.add_argument(
+        '--thread_count', type=int, required=True)
+    train_predict_parser.add_argument(
+        '--min_samples_split', type=int, required=True)
     train_predict_parser.add_argument('--split_tries', type=int, required=True)
     train_predict_parser.set_defaults(func=arg_train_predict)
 
@@ -112,7 +125,6 @@ if __name__ == '__main__':
     evaluate_parser.add_argument('--target', required=True)
     evaluate_parser.add_argument('--prediction', required=True)
     evaluate_parser.set_defaults(func=arg_evaluate)
-
 
     args = parser.parse_args()
     args.func(args)
