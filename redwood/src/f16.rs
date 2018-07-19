@@ -5,8 +5,9 @@ use std::fmt;
 /// Since there is limited support for this format on most CPUs, the only
 /// operations supported are equality, ordering, and conversion to/from `f32`.
 ///
-/// The internal representation is as an `i16`. The bits of the 16 bit float
-/// are arranged in the `i16` such that ordering works correctly.
+/// No attempt is made to do comparisons as in IEEE floats; instead, there is a
+/// total order on `F16`s, with comparisons involving NaNs deterministic but
+/// arbitrary.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[repr(C)]
 pub struct F16(i16);
@@ -25,14 +26,14 @@ extern "win64" {
 }
 
 impl F16 {
-    // A value that should never to be generated in normal use by conversion
-    // from `f32`
+    /// A value that should never to be generated in normal use by conversion
+    /// from `f32`
     pub const SPECIAL: F16 = F16(0x7FFF);
 
     pub fn to_f32_slice(destination: &mut [f32], source: &[F16]) {
         if destination.len() != source.len() {
             panic!(
-                "F16::to_f32 received slices of different lengths {} and {}",
+                "F16::to_f32_slice received slices of different lengths {} and {}",
                 destination.len(),
                 source.len(),
             );
@@ -62,7 +63,7 @@ impl F16 {
     pub fn from_f32_slice(destination: &mut [F16], source: &[f32]) {
         if destination.len() != source.len() {
             panic!(
-                "AvxConverter::to_f16 received slices of different lengths {} and {}",
+                "F16::from_f32_slice received slices of different lengths {} and {}",
                 destination.len(),
                 source.len(),
             );
