@@ -7,11 +7,13 @@ use rand::{FromEntropy, Rng, XorShiftRng};
 use data::{PredictingData, TrainingData};
 use f16::F16;
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 struct Node {
-    /// If this is a branch node, this is the value at which the children split.
-    /// On the left are values < `threshold`; on the right are >= `threshold`. If
-    /// this is a leaf, `threshold` is unused.
+    /// Either the sentinel value `F16::SPECIAL`, indicating that this is a leaf
+    /// node, or else this is the value at which the children split.
+    ///
+    /// On the left are values < `threshold`; on the right are >= `threshold`.
+    /// If this is a leaf, `threshold` is unused.
     threshold: F16,
 
     /// If this is a branch node, this is the feature we are splitting on. If a
@@ -19,15 +21,23 @@ struct Node {
     feature: u16,
 }
 
+impl Default for Node {
+    #[inline]
+    fn default() -> Self {
+        Node {
+            threshold: F16::SPECIAL,
+            feature: 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[repr(align(64))]
 struct Block {
     nodes: [Node; 15],
-    // which nodes are leaves (bit 0) and which are branches (bit 1)
-    flags: u16,
 
-    // how far ahead of this block are its children blocks?
-    next_blocks: u16,
+    // what block index do this block's children begin at?
+    next_blocks: u32,
 }
 
 impl fmt::Display for Block {
@@ -38,7 +48,7 @@ impl fmt::Display for Block {
         let mut s = "".to_owned();
         write!(s, "Block[")?;
         for i in 0..nodes.len() {
-            if self.flags & 1 << i != 0 {
+            if self.nodes[i].threshold != F16::SPECIAL {
                 write!(s, "Branch({}, {}), ", nodes[i].threshold, nodes[i].feature)?;
             } else {
                 write!(s, "Leaf({}), ", nodes[i].feature)?;
@@ -75,7 +85,7 @@ impl Tree {
         let mut node_index = 0usize;
         loop {
             let node = block.nodes[node_index];
-            if block.flags & (1 << node_index) == 0 {
+            if node.threshold == F16::SPECIAL {
                 return node.feature;
             }
             let go_left = sample[node.feature as usize] < node.threshold;
@@ -83,10 +93,10 @@ impl Tree {
                 node_index = 2 * node_index + if go_left { 1 } else { 2 };
             } else {
                 // we need to go to another block
-                let child_blocks = at + block.next_blocks as usize;
+                let child_blocks = block.next_blocks as usize;
                 let mut offset = if go_left { 0 } else { 1 };
-                for i in 7..node_index as u16 {
-                    if block.flags & (1 << i) != 0 {
+                for i in 7..node_index {
+                    if block.nodes[i].threshold != F16::SPECIAL {
                         offset += 2;
                     }
                 }
@@ -235,11 +245,7 @@ impl<'a> TreeBuilder<'a> {
         at: usize,
     ) {
         let block_len = self.blocks.len();
-        let offset = block_len - at;
-        if offset >= 0x10000 {
-            panic!("Can't fit offset into u16: {}", offset);
-        }
-        self.blocks[at].next_blocks = offset as u16;
+        self.blocks[at].next_blocks = block_len as u32;
         let new_feature_index = if indices.len() < self.min_samples_split {
             feature_index
         } else {
@@ -267,7 +273,6 @@ impl<'a> TreeBuilder<'a> {
             SplitResult::Leaf(node) => self.blocks[at].nodes[index] = node,
             SplitResult::Branch(bd) => {
                 self.blocks[at].nodes[index] = bd.node;
-                self.blocks[at].flags |= 1 << index;
                 if index < 7 {
                     self.new_node(
                         feature_index,
@@ -485,7 +490,7 @@ impl<'a> TreeBuilder<'a> {
         let x = *self.rng.choose(indices).unwrap();
         let label = self.data.labels()[x as usize];
         Node {
-            threshold: Default::default(),
+            threshold: F16::SPECIAL,
             feature: label,
         }
     }

@@ -25,6 +25,10 @@ extern "win64" {
 }
 
 impl F16 {
+    // A value that should never to be generated in normal use by conversion
+    // from `f32`
+    pub const SPECIAL: F16 = F16(0x7FFF);
+
     pub fn to_f32_slice(destination: &mut [f32], source: &[F16]) {
         if destination.len() != source.len() {
             panic!(
