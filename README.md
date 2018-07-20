@@ -18,7 +18,8 @@ dataset using scikit-learn's ExtraTreesClassifier, and to evaluate
 accuracy and log-loss of predictions. Here's an example of usage
 of this script and output on my system:
 
-```$ python examples/compare.py generate --directory ~/Data --n_classes 32 --n_features 200
+```
+$ python examples/compare.py generate --directory ~/Data --n_classes 32 --n_features 200
 $ python examples/compare.py train_predict --directory ~/Data --prediction_file ~/Data/sklearn.prediction --tree_count 300 --thread_count 3 --min_samples_split 2 --split_tries 15
 6.4524520129780285 seconds to parse training data
 35.01707567903213 seconds to train
@@ -46,12 +47,27 @@ log loss: 3.2602520048443964
 accuracy: 0.141
 ```
 
+## In the future
+
+- a method to save a forest for later predictions;
+
+- regression trees;
+
+- further speedups for training;
+
+- Python interface.
+
+
 ## Bugs and limitations
 
 Redwood uses half precision floats, and it currently uses only the AVX2
 instructions to do so. So, you'll need an x86-64 system, you'll need `gcc` or
 `clang` as an assembler, and if you run on a system without AVX2 instructions,
 Redwood will just crash.
+
+Of course, the other limitation of half precision floats is that there are only
+a few bits of precision and exponent. If your features have values above 65519,
+you will have to scale them to be smaller before using Redwood.
 
 Relatedly, Redwood parses floats by using Rust's standard library to parse them
 as 32 bit floats, and then converts them to 16 bit floats. This is absolutely
