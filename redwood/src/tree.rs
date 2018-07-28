@@ -76,7 +76,7 @@ impl Tree {
     pub fn predict_full(&self, data: &PredictingData, buffer: &mut [u16]) {
         for i in 0..data.sample_count() {
             let sample = data.sample(i as u32);
-            buffer[i] = self.predict_in_block(sample, 0);
+            buffer[i] = self.predict_in_block(sample, self.blocks.len() - 1);
         }
     }
 
@@ -212,6 +212,7 @@ struct TreeBuilder<'a> {
 
 struct BranchData<'a> {
     node: Node,
+    feature_index: usize,
     indices_left: &'a mut [u32],
     indices_right: &'a mut [u32],
     buffer_left: &'a mut [u32],
@@ -223,15 +224,10 @@ enum SplitResult<'a> {
     Branch(BranchData<'a>),
 }
 
-struct BlockData<'a> {
-    indices: &'a mut [u32],
-    buffer: &'a mut [u32],
-}
-
 impl<'a> TreeBuilder<'a> {
     fn build(mut self, indices: &mut [u32], buffer: &mut [u32]) -> Tree {
-        self.blocks.push(Default::default());
-        self.new_block(0, indices, buffer, 0);
+        let block = self.new_block(0, indices, buffer);
+        self.blocks.push(block);
         Tree {
             blocks: self.blocks.into_boxed_slice(),
         }
@@ -242,22 +238,22 @@ impl<'a> TreeBuilder<'a> {
         feature_index: usize,
         indices: &'b mut [u32],
         buffer: &'b mut [u32],
-        at: usize,
-    ) {
-        let block_len = self.blocks.len();
-        self.blocks[at].next_blocks = block_len as u32;
-        let new_feature_index = if indices.len() < self.min_samples_split {
-            feature_index
-        } else {
-            self.find_nonconstant_features(feature_index, indices)
-        };
-        let mut block_data: Vec<BlockData<'b>> = Vec::new();
-        self.new_node(new_feature_index, indices, buffer, at, 0, &mut block_data);
-        self.blocks
-            .resize(block_len + block_data.len(), Default::default());
-        for (i, bd) in block_data.drain(..).enumerate() {
-            self.new_block(new_feature_index, bd.indices, bd.buffer, block_len + i);
+    ) -> Block {
+        let mut block = Block::default();
+        let mut child_blocks: Vec<Block> = Vec::with_capacity(8);
+        self.new_node(
+            feature_index,
+            indices,
+            buffer,
+            &mut block,
+            0,
+            &mut child_blocks,
+        );
+        block.next_blocks = self.blocks.len() as u32;
+        for b in child_blocks.drain(..) {
+            self.blocks.push(b);
         }
+        block
     }
 
     fn new_node<'b>(
@@ -265,40 +261,42 @@ impl<'a> TreeBuilder<'a> {
         feature_index: usize,
         indices: &'b mut [u32],
         buffer: &'b mut [u32],
-        at: usize,
+        block: &mut Block,
         index: usize,
-        block_data: &mut Vec<BlockData<'b>>,
+        child_blocks: &mut Vec<Block>,
     ) {
         match self.try_split(feature_index, indices, buffer) {
-            SplitResult::Leaf(node) => self.blocks[at].nodes[index] = node,
+            SplitResult::Leaf(node) => block.nodes[index] = node,
             SplitResult::Branch(bd) => {
-                self.blocks[at].nodes[index] = bd.node;
+                block.nodes[index] = bd.node;
                 if index < 7 {
                     self.new_node(
+                        bd.feature_index,
+                        bd.indices_left,
+                        bd.buffer_left,
+                        block,
+                        2 * index + 1,
+                        child_blocks,
+                    );
+                    self.new_node(
+                        bd.feature_index,
+                        bd.indices_right,
+                        bd.buffer_right,
+                        block,
+                        2 * index + 2,
+                        child_blocks,
+                    );
+                } else {
+                    child_blocks.push(self.new_block(
                         feature_index,
                         bd.indices_left,
                         bd.buffer_left,
-                        at,
-                        2 * index + 1,
-                        block_data,
-                    );
-                    self.new_node(
+                    ));
+                    child_blocks.push(self.new_block(
                         feature_index,
                         bd.indices_right,
                         bd.buffer_right,
-                        at,
-                        2 * index + 2,
-                        block_data,
-                    );
-                } else {
-                    block_data.push(BlockData {
-                        indices: bd.indices_left,
-                        buffer: bd.buffer_left,
-                    });
-                    block_data.push(BlockData {
-                        indices: bd.indices_right,
-                        buffer: bd.buffer_right,
-                    });
+                    ));
                 }
             }
         }
@@ -313,7 +311,6 @@ impl<'a> TreeBuilder<'a> {
         let label0 = self.data.labels()[indices[0] as usize];
         // Leaf if all features are constant, we don't have enough samples,
         // our random leaf probability is triggered, or all labels are constant.
-
         if feature_index == self.features.len()
             || indices.len() < self.min_samples_split
             || self.rng.sample::<f32, Standard>(Standard) < self.leaf_probability
@@ -330,7 +327,7 @@ impl<'a> TreeBuilder<'a> {
 
     fn create_branch<'b>(
         &mut self,
-        feature_index: usize,
+        mut feature_index: usize,
         indices: &'b mut [u32],
         buffer: &'b mut [u32],
     ) -> SplitResult<'b> {
@@ -358,10 +355,42 @@ impl<'a> TreeBuilder<'a> {
             }
         }
 
-        let (threshold, feature, score) = (0..self.split_tries)
-            .map(|_| self.random_split(feature_index, indices))
-            .max_by_key(|tuple| FOrd(tuple.2))
-            .unwrap();
+        let mut threshold = F16::default();
+        let mut feature = 0u16;
+        let mut score = NEG_INFINITY;
+        let mut i = 0usize;
+        loop {
+            if feature_index >= self.features.len() {
+                break;
+            }
+            if score != NEG_INFINITY && i >= self.split_tries {
+                break;
+            }
+            if i >= 1000 {
+                break;
+            }
+            let (mut threshold0, feature_i, mut score0) = self.random_split(feature_index, indices);
+            let feature0 = self.features[feature_i];
+            if score0 == NEG_INFINITY {
+                match self.check_constant_feature(feature0, indices) {
+                    None => {
+                        self.features.swap(feature_i, feature_index);
+                        feature_index += 1;
+                        continue;
+                    }
+                    Some(threshold_new) => {
+                        threshold0 = threshold_new;
+                        score0 = self.score_split(feature0, threshold0, indices);
+                    }
+                }
+            }
+            if score0 > score {
+                score = score0;
+                threshold = threshold0;
+                feature = feature0;
+            }
+            i += 1;
+        }
 
         if score == NEG_INFINITY {
             return SplitResult::Leaf(self.create_leaf(indices));
@@ -389,6 +418,7 @@ impl<'a> TreeBuilder<'a> {
 
         return SplitResult::Branch(BranchData {
             node: Node { feature, threshold },
+            feature_index,
             indices_left,
             indices_right,
             buffer_left,
@@ -396,61 +426,50 @@ impl<'a> TreeBuilder<'a> {
         });
     }
 
-    #[inline(never)]
-    fn find_nonconstant_features(&mut self, feature_index: usize, indices: &[u32]) -> usize {
-        let is_constant = |slice: &[F16]| -> bool {
-            if indices.len() == 0 {
-                return true;
-            }
-            let first_index = indices[0];
-            let first_value = slice[first_index as usize];
-            if indices[1..]
-                .iter()
-                .all(|&i| slice[i as usize] == first_value)
-            {
-                return true;
-            }
-            return false;
-        };
-
-        let mut j = feature_index;
-        for i in feature_index..self.features.len() {
-            let feature = self.features[i];
-            let values = self.data.feature(feature);
-            if is_constant(values) {
-                self.features.swap(i, j);
-                j += 1;
+    fn check_constant_feature(&self, feature: u16, indices: &[u32]) -> Option<F16> {
+        use std::cmp::max;
+        let values = self.data.feature(feature);
+        if indices.len() == 0 {
+            return None;
+        }
+        let first_index = indices[0];
+        let first_value = values[first_index as usize];
+        for &i in indices[1..].iter() {
+            let value = values[i as usize];
+            if value != first_value {
+                return Some(max(value, first_value));
             }
         }
-
-        j
+        None
     }
 
-    // returns (threshold, feature_index, score)
+    // returns (threshold, feature_i, score)
     #[inline(never)]
-    fn random_split(&mut self, feature_index: usize, indices: &[u32]) -> (F16, u16, f64) {
-        let feature = *self.rng.choose(&self.features[feature_index..]).unwrap();
+    fn random_split(&mut self, feature_index: usize, indices: &[u32]) -> (F16, usize, f64) {
+        let feature_i = self.rng.gen_range(feature_index, self.features.len());
+        let feature = self.features[feature_i];
         let sample = *self.rng.choose(indices).unwrap();
         let values = self.data.feature(feature);
         let threshold = values[sample as usize];
-        let labels = self.data.labels();
 
+        let score = self.score_split(feature, threshold, indices);
+        (threshold, feature_i, score)
+    }
+
+    fn score_split(&mut self, feature: u16, threshold: F16, indices: &[u32]) -> f64 {
         for i in self.counts_left.iter_mut() {
             *i = 0;
         }
         for i in self.counts_right.iter_mut() {
             *i = 0;
         }
-
-        self.make_counts(&labels, &indices, &values, threshold);
-
-        let score = self.gini_score();
-
-        (threshold, feature, score)
+        self.make_counts(&indices, self.data.feature(feature), threshold);
+        self.gini_score()
     }
 
-    #[inline(always)]
-    fn make_counts(&mut self, labels: &[u16], indices: &[u32], values: &[F16], threshold: F16) {
+    #[inline(never)]
+    fn make_counts(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
+        let labels = self.data.labels();
         for &sample_index in indices.iter() {
             let label = labels[sample_index as usize];
             let feature_value = values[sample_index as usize];
