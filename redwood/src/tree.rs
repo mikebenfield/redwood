@@ -444,7 +444,6 @@ impl<'a> TreeBuilder<'a> {
     }
 
     // returns (threshold, feature_i, score)
-    #[inline(never)]
     fn random_split(&mut self, feature_index: usize, indices: &[u32]) -> (F16, usize, f64) {
         let feature_i = self.rng.gen_range(feature_index, self.features.len());
         let feature = self.features[feature_i];
@@ -467,7 +466,6 @@ impl<'a> TreeBuilder<'a> {
         self.gini_score()
     }
 
-    #[inline(never)]
     fn make_counts(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
         let labels = self.data.labels();
         for &sample_index in indices.iter() {
@@ -483,7 +481,6 @@ impl<'a> TreeBuilder<'a> {
 
     /// Rather than computing the full Gini gain, we just compute
     /// sum |S_i|^2 / |S| - |S| for each side of the split.
-    #[inline(never)]
     fn gini_score(&mut self) -> f64 {
         let mut score = 0f64;
 
