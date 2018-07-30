@@ -355,10 +355,13 @@ impl<'a> TreeBuilder<'a> {
             }
         }
 
-        let mut threshold = F16::default();
-        let mut feature = 0u16;
-        let mut score = NEG_INFINITY;
         let mut i = 0usize;
+        let (mut score, mut threshold, mut feature) = self.try_feature(
+            indices,
+            |s, i, v, t| s.make_counts1(i, v, t),
+            &mut i,
+            &mut feature_index,
+        );
         loop {
             if feature_index >= self.features.len() {
                 break;
@@ -369,27 +372,17 @@ impl<'a> TreeBuilder<'a> {
             if i >= 1000 {
                 break;
             }
-            let (mut threshold0, feature_i, mut score0) = self.random_split(feature_index, indices);
-            let feature0 = self.features[feature_i];
-            if score0 == NEG_INFINITY {
-                match self.check_constant_feature(feature0, indices) {
-                    None => {
-                        self.features.swap(feature_i, feature_index);
-                        feature_index += 1;
-                        continue;
-                    }
-                    Some(threshold_new) => {
-                        threshold0 = threshold_new;
-                        score0 = self.score_split(feature0, threshold0, indices);
-                    }
-                }
-            }
+            let (score0, threshold0, feature0) = self.try_feature(
+                indices,
+                |s, i, v, t| s.make_counts(i, v, t),
+                &mut i,
+                &mut feature_index,
+            );
             if score0 > score {
                 score = score0;
                 threshold = threshold0;
                 feature = feature0;
             }
-            i += 1;
         }
 
         if score == NEG_INFINITY {
@@ -426,6 +419,39 @@ impl<'a> TreeBuilder<'a> {
         });
     }
 
+    fn try_feature<F>(
+        &mut self,
+        indices: &[u32],
+        make_counts: F,
+        i: &mut usize,
+        feature_index: &mut usize,
+    ) -> (f64, F16, u16)
+    where
+        F: FnOnce(&mut Self, &[u32], &[F16], F16),
+    {
+        let (mut threshold, feature_i) = self.random_split(*feature_index, indices);
+        let feature = self.features[feature_i];
+        let values = self.data.feature(feature);
+        make_counts(self, indices, values, threshold);
+        let mut score = self.gini_score();
+        if score == NEG_INFINITY {
+            match self.check_constant_feature(feature, indices) {
+                None => {
+                    self.features.swap(feature_i, *feature_index);
+                    *feature_index += 1;
+                    return (score, threshold, feature);
+                }
+                Some(threshold_new) => {
+                    threshold = threshold_new;
+                    self.make_counts(indices, values, threshold);
+                    score = self.gini_score();
+                }
+            }
+        }
+        *i += 1;
+        return (score, threshold, feature);
+    }
+
     fn check_constant_feature(&self, feature: u16, indices: &[u32]) -> Option<F16> {
         use std::cmp::max;
         let values = self.data.feature(feature);
@@ -443,38 +469,44 @@ impl<'a> TreeBuilder<'a> {
         None
     }
 
-    // returns (threshold, feature_i, score)
-    fn random_split(&mut self, feature_index: usize, indices: &[u32]) -> (F16, usize, f64) {
+    // returns (threshold, feature_i)
+    fn random_split(&mut self, feature_index: usize, indices: &[u32]) -> (F16, usize) {
         let feature_i = self.rng.gen_range(feature_index, self.features.len());
         let feature = self.features[feature_i];
         let sample = *self.rng.choose(indices).unwrap();
         let values = self.data.feature(feature);
         let threshold = values[sample as usize];
-
-        let score = self.score_split(feature, threshold, indices);
-        (threshold, feature_i, score)
+        (threshold, feature_i)
     }
 
-    fn score_split(&mut self, feature: u16, threshold: F16, indices: &[u32]) -> f64 {
+    fn make_counts1(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
         for i in self.counts_left.iter_mut() {
             *i = 0;
         }
         for i in self.counts_right.iter_mut() {
             *i = 0;
         }
-        self.make_counts(&indices, self.data.feature(feature), threshold);
-        self.gini_score()
-    }
-
-    fn make_counts(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
         let labels = self.data.labels();
         for &sample_index in indices.iter() {
             let label = labels[sample_index as usize];
             let feature_value = values[sample_index as usize];
             if feature_value < threshold {
                 self.counts_left[label as usize] += 1;
-            } else {
-                self.counts_right[label as usize] += 1;
+            }
+            self.counts_right[label as usize] += 1;
+        }
+    }
+
+    fn make_counts(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
+        for i in self.counts_left.iter_mut() {
+            *i = 0;
+        }
+        let labels = self.data.labels();
+        for &sample_index in indices.iter() {
+            let label = labels[sample_index as usize];
+            let feature_value = values[sample_index as usize];
+            if feature_value < threshold {
+                self.counts_left[label as usize] += 1;
             }
         }
     }
@@ -482,24 +514,25 @@ impl<'a> TreeBuilder<'a> {
     /// Rather than computing the full Gini gain, we just compute
     /// sum |S_i|^2 / |S| - |S| for each side of the split.
     fn gini_score(&mut self) -> f64 {
-        let mut score = 0f64;
-
-        for counts in [&mut self.counts_left, &mut self.counts_right].iter() {
-            let mut total = 0u64;
-            let mut accum = 0u64;
-            for i in counts.iter() {
-                let j = *i as u64;
-                total += j;
-                accum += j * j;
-            }
-            if total == 0 {
-                return NEG_INFINITY;
-            }
-            let total_f = total as f64;
-            score += accum as f64 / total_f - total_f;
+        let mut total_left = 0u64;
+        let mut total_right = 0u64;
+        let mut accum_left = 0u64;
+        let mut accum_right = 0u64;
+        for i in 0..self.counts_left.len() {
+            let j = self.counts_left[i] as u64;
+            total_left += j;
+            accum_left += j * j;
+            let k = self.counts_right[i] as u64 - j;
+            total_right += k;
+            accum_right += k * k;
         }
-
-        return score;
+        if total_left == 0 || total_right == 0 {
+            return NEG_INFINITY;
+        }
+        let total_left_f = total_left as f64;
+        let total_right_f = total_right as f64;
+        (accum_left as f64 / total_left_f - total_left_f)
+            + (accum_right as f64 / total_right_f - total_right_f)
     }
 
     fn create_leaf(&mut self, indices: &[u32]) -> Node {
