@@ -199,14 +199,16 @@ impl ForestConfiguration {
                             }
                             Err(_) => return,
                         }
-                        let tree = self.tree_configuration.grow_full(
-                            data,
-                            &mut indices,
-                            &mut buffer,
-                            &mut counts_left,
-                            &mut counts_right,
-                            &mut rng0,
-                        );
+                        let tree = unsafe {
+                            self.tree_configuration.grow_full(
+                                data,
+                                &mut indices,
+                                &mut buffer,
+                                &mut counts_left,
+                                &mut counts_right,
+                                &mut rng0,
+                            )
+                        };
                         match trees_r.write() {
                             Ok(ref mut trees_guard) => trees_guard.push(tree),
                             Err(e) => {

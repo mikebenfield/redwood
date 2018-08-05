@@ -164,17 +164,23 @@ impl TreeConfiguration {
         let mut rng = XorShiftRng::from_entropy();
         let mut counts_left = vec![0u32; data.max_label() as usize + 1];
         let mut counts_right = vec![0u32; data.max_label() as usize + 1];
-        self.grow_full(
-            data,
-            &mut indices,
-            &mut buffer,
-            &mut counts_left,
-            &mut counts_right,
-            &mut rng,
-        )
+        unsafe {
+            self.grow_full(
+                data,
+                &mut indices,
+                &mut buffer,
+                &mut counts_left,
+                &mut counts_right,
+                &mut rng,
+            )
+        }
     }
 
-    pub fn grow_full(
+    /// Grow a tree
+    ///
+    /// `unsafe` because the elements of `indices` must be smaller than
+    /// `data.sample_count()`
+    pub unsafe fn grow_full(
         &self,
         data: &TrainingData,
         indices: &mut [u32],
@@ -183,6 +189,8 @@ impl TreeConfiguration {
         counts_right: &mut [u32],
         rng: &mut XorShiftRng,
     ) -> Tree {
+        assert!(data.max_label() as usize + 1 == counts_left.len());
+        assert!(data.max_label() as usize + 1 == counts_right.len());
         let features: Vec<u16> = (0..data.feature_count() as u16).collect();
         TreeBuilder {
             rng,
@@ -480,6 +488,7 @@ impl<'a> TreeBuilder<'a> {
     }
 
     fn make_counts1(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
+        // see comments to `make_counts`
         for i in self.counts_left.iter_mut() {
             *i = 0;
         }
@@ -488,8 +497,8 @@ impl<'a> TreeBuilder<'a> {
         }
         let labels = self.data.labels();
         for &sample_index in indices.iter() {
-            let label = labels[sample_index as usize];
-            let feature_value = values[sample_index as usize];
+            let label = unsafe { *labels.get_unchecked(sample_index as usize) };
+            let feature_value = unsafe { *values.get_unchecked(sample_index as usize) };
             if feature_value < threshold {
                 self.counts_left[label as usize] += 1;
             }
@@ -498,13 +507,19 @@ impl<'a> TreeBuilder<'a> {
     }
 
     fn make_counts(&mut self, indices: &[u32], values: &[F16], threshold: F16) {
+        // Over 50% of runtime is spent in this function in many cases. There is
+        // probably room for further optimization, but note that removing the
+        // bounds check on `self.counts_left` results in a slowdown (see rust
+        // github issue #52819). I'd like to write an assembly version of this,
+        // but writing it as a separate file would prevent inlining, and Rust's
+        // inline ASM is more trouble than it's worth right now.
         for i in self.counts_left.iter_mut() {
             *i = 0;
         }
         let labels = self.data.labels();
         for &sample_index in indices.iter() {
-            let label = labels[sample_index as usize];
-            let feature_value = values[sample_index as usize];
+            let label = unsafe { *labels.get_unchecked(sample_index as usize) };
+            let feature_value = unsafe { *values.get_unchecked(sample_index as usize) };
             if feature_value < threshold {
                 self.counts_left[label as usize] += 1;
             }
