@@ -317,10 +317,9 @@ impl<'a> TreeBuilder<'a> {
         buffer: &'b mut [u32],
     ) -> SplitResult<'b> {
         let label0 = self.data.labels()[indices[0] as usize];
-        // Leaf if all features are constant, we don't have enough samples,
-        // our random leaf probability is triggered, or all labels are constant.
-        if feature_index == self.features.len()
-            || indices.len() < self.min_samples_split
+        // Leaf if we don't have enough samples, our random leaf probability is
+        // triggered, or all labels are constant.
+        if indices.len() < self.min_samples_split
             || self.rng.sample::<f32, Standard>(Standard) < self.leaf_probability
             || indices
                 .iter()
