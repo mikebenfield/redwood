@@ -6,9 +6,14 @@ extern crate rand;
 pub mod data;
 pub mod f16;
 pub mod forest;
+pub mod prediction;
+pub mod score;
 pub mod tree;
+pub mod types;
 
 pub use data::{PredictingData, TrainingData};
 pub use f16::F16;
-pub use forest::{Forest, ForestConfiguration};
-pub use tree::TreeConfiguration;
+pub use forest::{Ensemble, Forest, ForestConfiguration};
+pub use prediction::{Combiner, ProbabilityCombiner};
+pub use score::Gini;
+pub use tree::{StandardTreeTypes, TreeConfiguration};

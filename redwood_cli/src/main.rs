@@ -3,12 +3,16 @@ extern crate failure;
 extern crate redwood;
 
 use std::mem;
+use std::ops::Deref;
 use std::time::{Duration, Instant};
 
 use clap::{App, Arg, ArgMatches, SubCommand};
 use failure::Error;
 
-use redwood::{ForestConfiguration, PredictingData, TrainingData, TreeConfiguration};
+use redwood::{
+    Ensemble, ForestConfiguration, Gini, PredictingData, ProbabilityCombiner, StandardTreeTypes,
+    TrainingData, TreeConfiguration,
+};
 
 fn duration_secs(duration: &Duration) -> f64 {
     let secs = duration.as_secs() as f64;
@@ -51,15 +55,26 @@ fn run_train_predict(matches: &ArgMatches) -> Result<(), Error> {
         .unwrap()
         .parse::<usize>()
         .unwrap();
-    let leaf_probability = matches
-        .value_of("leaf_probability")
+    let max_depth = matches
+        .value_of("max_depth")
         .unwrap()
-        .parse::<f32>()
+        .parse::<usize>()
         .unwrap();
+    let seed: Option<[u8; 16]> = {
+        let val = matches.value_of("seed").unwrap();
+        if val.deref() == "none" {
+            None
+        } else {
+            use std::mem::transmute;
+            let seed64 = val.parse::<u64>().unwrap();
+            let seed_array = [seed64, seed64];
+            Some(unsafe { transmute(seed_array) })
+        }
+    };
     let time = matches.value_of("time").unwrap() == "true";
 
     let time_0 = Instant::now();
-    let training_data = TrainingData::parse(train_filename)?;
+    let training_data = TrainingData::<F16, u16>::parse(train_filename)?;
     let time_1 = Instant::now();
     let duration_1 = time_1.duration_since(time_0);
     print_time_if(time, "to parse training data", &duration_1);
@@ -68,12 +83,17 @@ fn run_train_predict(matches: &ArgMatches) -> Result<(), Error> {
         tree_config
             .min_samples_split(min_samples_split)
             .split_tries(split_tries)
-            .leaf_probability(leaf_probability);
-        ForestConfiguration::new()
+            .max_depth(max_depth);
+        let mut forest_config = ForestConfiguration::new();
+        forest_config
             .thread_count(thread_count_train)
             .tree_count(tree_count)
-            .tree_configuration(tree_config)
-            .grow_entropy(&training_data)
+            .tree_configuration(tree_config);
+        if let Some(s) = seed {
+            forest_config.grow_seed::<StandardTreeTypes, Gini>(&training_data, s)
+        } else {
+            forest_config.grow_entropy::<StandardTreeTypes, Gini>(&training_data)
+        }
     };
     mem::drop(training_data);
     let time_2 = Instant::now();
@@ -83,7 +103,9 @@ fn run_train_predict(matches: &ArgMatches) -> Result<(), Error> {
     let time_3 = Instant::now();
     let duration_3 = time_3.duration_since(time_2);
     print_time_if(time, "to parse testing data", &duration_3);
-    let predictions = forest.predict(&test_data, thread_count_predict);
+    use redwood::F16;
+    let ens: &Ensemble<F16, u16> = &forest;
+    let predictions = ens.combine::<ProbabilityCombiner>(&test_data, thread_count_predict);
     let time_4 = Instant::now();
     let duration_4 = time_4.duration_since(time_3);
     print_time_if(time, "to predict", &duration_4);
@@ -98,9 +120,13 @@ fn run() -> Result<(), Error> {
         }
         Ok(())
     };
-    let f32_validator = |s: String| {
-        if let Err(_) = s.parse::<f32>() {
-            return Err(format!("Cannot parse {} as float", s));
+
+    let seed_validator = |s: String| {
+        if &s == "none" {
+            return Ok(());
+        }
+        if let Err(_) = s.parse::<u64>() {
+            return Err(format!("Cannot parse {} as seed", s));
         }
         Ok(())
     };
@@ -181,13 +207,22 @@ fn run() -> Result<(), Error> {
                         .validator(usize_validator),
                 )
                 .arg(
-                    Arg::with_name("leaf_probability")
-                        .long("leaf_probability")
-                        .value_name("FLOAT")
-                        .help("Probability of arbitrarily making any given node a leaf node")
+                    Arg::with_name("max_depth")
+                        .long("max_depth")
+                        .value_name("NUM")
+                        .help("Maximum depth of a tree")
                         .takes_value(true)
-                        .default_value("0.0")
-                        .validator(f32_validator),
+                        .default_value("1000000000")
+                        .validator(usize_validator),
+                )
+                .arg(
+                    Arg::with_name("seed")
+                        .long("seed")
+                        .value_name("NUM|none")
+                        .help("Random number seed")
+                        .takes_value(true)
+                        .default_value("none")
+                        .validator(seed_validator),
                 )
                 .arg(
                     Arg::with_name("time")

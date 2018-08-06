@@ -10,7 +10,7 @@ use std::fmt;
 /// arbitrary.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[repr(C)]
-pub struct F16(i16);
+pub struct F16(pub(crate) i16);
 
 impl fmt::Display for F16 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
