@@ -16,10 +16,12 @@ macro_rules! impl_index {
                 vec.into_boxed_slice()
             }
 
+            #[inline(always)]
             fn into(self) -> usize {
                 self as usize
             }
 
+            #[inline(always)]
             fn from(x: usize) -> Self {
                 x as Self
             }
