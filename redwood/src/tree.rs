@@ -647,3 +647,93 @@ impl TreeTypes for StandardTreeTypes {
 
     type Tree = SimpleTree<StandardBlock>;
 }
+
+const FLOAT_NODE_COUNT: usize = 7;
+const FLOAT_INTERIOR_COUNT: usize = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FloatNode {
+    threshold: f32,
+    feature: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FloatBlock {
+    nodes: [FloatNode; FLOAT_NODE_COUNT],
+    next_blocks: u32,
+}
+
+impl Default for FloatBlock {
+    #[inline]
+    fn default() -> Self {
+        FloatBlock {
+            nodes: [FloatNode {
+                threshold: 0.0,
+                feature: 0xFFFFFFFF,
+            }; FLOAT_NODE_COUNT],
+            next_blocks: 0,
+        }
+    }
+}
+
+impl<T> Block<T, f32, f32> for FloatBlock {
+    const NODE_COUNT: usize = FLOAT_NODE_COUNT;
+
+    const INTERIOR_COUNT: usize = FLOAT_INTERIOR_COUNT;
+
+    #[inline]
+    fn node(&self, _tree: &T, i: usize) -> Node<f32, f32> {
+        let float_node = self.nodes[i];
+        if float_node.feature == 0xFFFFFFFF {
+            Node::Leaf(float_node.threshold)
+        } else {
+            Node::Branch {
+                threshold: float_node.threshold,
+                feature_index: float_node.feature as usize,
+            }
+        }
+    }
+
+    #[inline]
+    fn next_blocks(&self) -> usize {
+        self.next_blocks as usize
+    }
+}
+
+impl<T> BlockMut<T, f32, f32> for FloatBlock {
+    #[inline]
+    fn set_node(&mut self, _tree: &mut T, i: usize, n: Node<f32, f32>) {
+        self.nodes[i] = match n {
+            Node::Leaf(label) => FloatNode {
+                threshold: label,
+                feature: 0xFFFFFFFF,
+            },
+            Node::Branch {
+                threshold,
+                feature_index,
+            } => FloatNode {
+                threshold,
+                feature: feature_index as u32,
+            },
+        }
+    }
+
+    #[inline]
+    fn set_next_blocks(&mut self, x: usize) {
+        self.next_blocks = x as u32;
+    }
+}
+
+pub struct FloatTreeTypes;
+
+impl TreeTypes for FloatTreeTypes {
+    type Feature = f32;
+
+    type Label = f32;
+
+    type Block = FloatBlock;
+
+    type TreeInProgress = SimpleTreeInProgress<FloatBlock>;
+
+    type Tree = SimpleTree<FloatBlock>;
+}

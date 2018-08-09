@@ -1,5 +1,7 @@
+use std::fmt::Display;
 use std::fs::File;
 use std::io::Write;
+use std::ops::{Add, Div, Mul};
 use std::path::Path;
 
 use data::DataError;
@@ -46,6 +48,23 @@ impl ProbabilityPrediction {
 
 pub struct Prediction<Label> {
     data: Box<[Label]>,
+}
+
+impl<Label> Prediction<Label>
+where
+    Label: Display,
+{
+    pub fn save<P: AsRef<Path> + ?Sized>(&self, path: &P) -> Result<(), DataError> {
+        self.save0(path.as_ref())
+    }
+
+    fn save0(&self, path: &Path) -> Result<(), DataError> {
+        let mut file = File::create(path)?;
+        for label in self.data.iter() {
+            write!(file, "{}\n", label)?;
+        }
+        Ok(())
+    }
 }
 
 pub trait Combiner<Label>: Send + Sync {
@@ -98,6 +117,66 @@ where
         ProbabilityPrediction {
             data: results_f32.into_boxed_slice(),
             sample_count,
+        }
+    }
+}
+
+pub struct MeanCombiner<Float> {
+    contents: Box<[Float]>,
+    counts: Box<[usize]>,
+}
+
+pub trait Float:
+    Sized
+    + Copy
+    + PartialOrd
+    + Add<Output = Self>
+    + Div<Output = Self>
+    + Mul<Output = Self>
+    + Send
+    + Sync
+{
+    fn from(x: usize) -> Self;
+}
+
+impl Float for f32 {
+    fn from(x: usize) -> Self {
+        x as Self
+    }
+}
+
+impl Float for f64 {
+    fn from(x: usize) -> Self {
+        x as Self
+    }
+}
+
+impl<Label> Combiner<Label> for MeanCombiner<Label>
+where
+    Label: Float,
+{
+    type Result = Prediction<Label>;
+
+    fn new(_max_label: Label, sample_count: usize) -> Self {
+        MeanCombiner {
+            contents: vec![Float::from(0); sample_count].into_boxed_slice(),
+            counts: vec![0; sample_count].into_boxed_slice(),
+        }
+    }
+
+    fn label(&mut self, sample: usize, label: Label) {
+        let prev = self.contents[sample];
+        let count = self.counts[sample];
+        let new_count = count + 1;
+        let count_f = Label::from(count);
+        let new_count_f = Label::from(new_count);
+        self.counts[sample] = new_count;
+        self.contents[sample] = (count_f * prev + label) / new_count_f;
+    }
+
+    fn combine(&mut self) -> Self::Result {
+        Prediction {
+            data: self.contents.clone(),
         }
     }
 }

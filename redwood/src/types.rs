@@ -64,6 +64,24 @@ impl_labelt!{u32}
 impl_labelt!{u64}
 impl_labelt!{usize}
 
+impl LabelT for f32 {
+    #[inline(always)]
+    fn eq(self, other: Self) -> bool {
+        use std::mem::transmute;
+        let (x, y): (u32, u32) = unsafe { transmute((self, other)) };
+        x == y
+    }
+}
+
+impl LabelT for f64 {
+    #[inline(always)]
+    fn eq(self, other: Self) -> bool {
+        use std::mem::transmute;
+        let (x, y): (u64, u64) = unsafe { transmute((self, other)) };
+        x == y
+    }
+}
+
 pub trait HasMax: Sized {
     fn max<I>(i: I) -> Self
     where
