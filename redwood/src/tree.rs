@@ -484,10 +484,13 @@ struct StandardNode {
     feature: u16,
 }
 
+const STANDARD_NODE_COUNT: usize = 15;
+const STANDARD_INTERIOR_COUNT: usize = 7;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[repr(align(64))]
 pub struct StandardBlock {
-    nodes: [StandardNode; 15],
+    nodes: [StandardNode; STANDARD_NODE_COUNT],
     next_blocks: u32,
 }
 
@@ -498,7 +501,7 @@ impl Default for StandardBlock {
             nodes: [StandardNode {
                 threshold: F16::SPECIAL,
                 feature: 0,
-            }; 15],
+            }; STANDARD_NODE_COUNT],
             next_blocks: 0,
         }
     }
@@ -531,9 +534,9 @@ impl<Block> Default for SimpleTree<Block> {
 }
 
 impl<T> Block<T, F16, u16> for StandardBlock {
-    const NODE_COUNT: usize = 15;
+    const NODE_COUNT: usize = STANDARD_NODE_COUNT;
 
-    const INTERIOR_COUNT: usize = 7;
+    const INTERIOR_COUNT: usize = STANDARD_INTERIOR_COUNT;
 
     #[inline]
     fn node(&self, _tree: &T, i: usize) -> Node<F16, u16> {
