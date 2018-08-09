@@ -1,8 +1,9 @@
+use std::f64::NEG_INFINITY;
 use std::mem;
 use std::slice;
 
 use data::TrainingData;
-use std::f64::NEG_INFINITY;
+use types::{IndexT, LabelT};
 
 pub trait Scorer<Label> {
     fn new<F>(data: &TrainingData<F, Label>) -> Self;
@@ -104,9 +105,12 @@ impl Gini {
     }
 }
 
-impl Scorer<u16> for Gini {
-    fn new<F>(data: &TrainingData<F, u16>) -> Self {
-        let len = data.max_label() as usize + 1;
+impl<Label> Scorer<Label> for Gini
+where
+    Label: IndexT + LabelT,
+{
+    fn new<F>(data: &TrainingData<F, Label>) -> Self {
+        let len = data.max_label().into() + 1;
         let mut left = Vec::with_capacity(len);
         let mut total = Vec::with_capacity(len);
         unsafe {
@@ -131,7 +135,7 @@ impl Scorer<u16> for Gini {
         &mut self,
         indices: &[u32],
         values: &[Feature],
-        labels: &[u16],
+        labels: &[Label],
         threshold: Feature,
     ) -> f64 {
         // see comments to `subsequent_score`
@@ -146,9 +150,9 @@ impl Scorer<u16> for Gini {
             let label = *labels.get_unchecked(sample_index as usize);
             let feature_value = *values.get_unchecked(sample_index as usize);
             if feature_value < threshold {
-                self.left_mut()[label as usize] += 1;
+                self.left_mut()[label.into()] += 1;
             }
-            self.total_mut()[label as usize] += 1;
+            self.total_mut()[label.into()] += 1;
         }
 
         self.score()
@@ -158,7 +162,7 @@ impl Scorer<u16> for Gini {
         &mut self,
         indices: &[u32],
         values: &[Feature],
-        labels: &[u16],
+        labels: &[Label],
         threshold: Feature,
     ) -> f64 {
         // Over 50% of runtime is spent in this function in many cases. There is
@@ -175,7 +179,7 @@ impl Scorer<u16> for Gini {
             let label = *labels.get_unchecked(sample_index as usize);
             let feature_value = *values.get_unchecked(sample_index as usize);
             if feature_value < threshold {
-                self.left_mut()[label as usize] += 1;
+                self.left_mut()[label.into()] += 1;
             }
         }
 
