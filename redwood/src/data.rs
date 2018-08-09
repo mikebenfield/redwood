@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::mem;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -11,8 +10,8 @@ use types::HasMax;
 pub enum DataError {
     #[fail(display = "Data creation error {}", _0)]
     Creation(String),
-    #[fail(display = "Failed to parse float; line {}", _0)]
-    NumberParsing(usize),
+    #[fail(display = "Failed to parse: {}", _0)]
+    Parsing(String),
     #[fail(display = "Io error: {}", _0)]
     Io(#[cause] io::Error),
 }
@@ -22,6 +21,104 @@ impl From<io::Error> for DataError {
         DataError::Io(x)
     }
 }
+
+/// A type taht can be parsed from a string.
+///
+/// This only exists because we handle `F16` differently: rather than parsing
+/// one at a time, we parse a lot of them as `f32` and then convert them to
+/// `F16` in a batch.
+///
+/// Parsing as `f32` and converting is absolutely the wrong way to do it, but
+/// for now it's what I'm going with for ease of implementation.
+pub trait Parseable: Sized {
+    type Container;
+
+    fn new_container() -> Self::Container;
+
+    fn container_len(container: &Self::Container) -> usize;
+
+    fn parse_one(string: &str, container: &mut Self::Container) -> Result<(), DataError>;
+
+    fn done(container: Self::Container) -> Box<[Self]>;
+}
+
+#[derive(Clone)]
+pub struct F16Container {
+    vec_f16: Vec<F16>,
+    vec_f32: Vec<f32>,
+}
+
+const MAX_BUFF: usize = 0x1000;
+
+impl Parseable for F16 {
+    type Container = F16Container;
+
+    fn new_container() -> F16Container {
+        F16Container {
+            vec_f16: Vec::new(),
+            vec_f32: Vec::new(),
+        }
+    }
+
+    fn container_len(container: &F16Container) -> usize {
+        container.vec_f16.len() + container.vec_f32.len()
+    }
+
+    fn parse_one(string: &str, container: &mut F16Container) -> Result<(), DataError> {
+        let x = str::parse::<f32>(string).map_err(|_| DataError::Parsing(string.to_owned()))?;
+        container.vec_f32.push(x);
+        if container.vec_f32.len() >= MAX_BUFF {
+            convert_all(&mut container.vec_f16, &mut container.vec_f32);
+        }
+        Ok(())
+    }
+
+    fn done(mut container: F16Container) -> Box<[Self]> {
+        convert_all(&mut container.vec_f16, &mut container.vec_f32);
+        container.vec_f16.into_boxed_slice()
+    }
+}
+
+/// A type that can be parsed directly.
+pub trait ParseMarker: FromStr + Copy {}
+
+impl<T> Parseable for T
+where
+    T: ParseMarker,
+{
+    type Container = Vec<T>;
+
+    fn new_container() -> Vec<T> {
+        Vec::new()
+    }
+
+    fn container_len(container: &Vec<T>) -> usize {
+        container.len()
+    }
+
+    fn parse_one(string: &str, container: &mut Vec<T>) -> Result<(), DataError> {
+        let x = str::parse::<T>(string).map_err(|_| DataError::Parsing(string.to_owned()))?;
+        container.push(x);
+        Ok(())
+    }
+
+    fn done(container: Vec<T>) -> Box<[T]> {
+        container.into_boxed_slice()
+    }
+}
+
+impl ParseMarker for u8 {}
+impl ParseMarker for u16 {}
+impl ParseMarker for u32 {}
+impl ParseMarker for u64 {}
+impl ParseMarker for usize {}
+impl ParseMarker for i8 {}
+impl ParseMarker for i16 {}
+impl ParseMarker for i32 {}
+impl ParseMarker for i64 {}
+impl ParseMarker for isize {}
+impl ParseMarker for f32 {}
+impl ParseMarker for f64 {}
 
 /// Data containing features only.
 ///
@@ -34,45 +131,37 @@ pub struct PredictingData<Feature> {
     x: Box<[Feature]>,
 }
 
-impl PredictingData<F16> {
+impl<Feature> PredictingData<Feature>
+where
+    Feature: Parseable,
+{
     /// Parse a text file into a `PredictingData`.
     ///
-    /// Each line in the file represents a sample, with features as floats
-    /// separated by whitespace.
-    ///
-    /// Right now, this parses `f32`s and then converts to `F16`. This is
-    /// absolutely the wrong way to do it, but for now it's what I'm
-    /// going with for ease of implementation.
+    /// Each line in the file represents a sample, with separated by whitespace.
     pub fn parse<P: AsRef<Path> + ?Sized>(path: &P) -> Result<Self, DataError> {
         Self::parse0(path.as_ref())
     }
 
-    pub fn parse0(path: &Path) -> Result<PredictingData<F16>, DataError> {
-        const MAX_BUFF: usize = 0x1000;
-
+    pub fn parse0(path: &Path) -> Result<PredictingData<Feature>, DataError> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
-        let mut buf_f32: Vec<f32> = Vec::new();
-        let mut buf_f16: Vec<F16> = Vec::new();
+        let mut container = Feature::new_container();
         let mut text = String::new();
         let mut lineno = 1usize;
 
         reader.read_line(&mut text)?;
-        parse_floats(&text, &mut buf_f32, lineno)?;
-        let n_features = buf_f32.len();
+        parse_features::<Feature>(&text, &mut container)?;
+        let n_features = Feature::container_len(&container);
 
         loop {
             lineno += 1;
-            if buf_f32.len() >= MAX_BUFF {
-                convert_all(&mut buf_f16, &mut buf_f32);
-            }
             text.clear();
             if reader.read_line(&mut text)? == 0 {
                 break;
             }
-            let orig_len = buf_f32.len();
-            parse_floats(&text, &mut buf_f32, lineno)?;
-            let new_len = buf_f32.len();
+            let orig_len = Feature::container_len(&container);
+            parse_features::<Feature>(&text, &mut container)?;
+            let new_len = Feature::container_len(&container);
             if new_len - orig_len != n_features {
                 return Err(DataError::Creation(format!(
                     "Inconsistent number of features: {} or {}",
@@ -82,9 +171,9 @@ impl PredictingData<F16> {
             }
         }
 
-        convert_all(&mut buf_f16, &mut buf_f32);
+        let y = Feature::done(container);
 
-        PredictingData::new(buf_f16.into_boxed_slice(), lineno - 1)
+        PredictingData::new(y, lineno - 1)
     }
 }
 
@@ -174,11 +263,11 @@ impl<Feature, Label> TrainingData<Feature, Label> {
     }
 }
 
-impl<Label> TrainingData<F16, Label>
+impl<Feature, Label> TrainingData<Feature, Label>
 where
-    Label: HasMax + Clone + FromStr,
+    Label: HasMax + Clone,
 {
-    pub fn new(x: Box<[F16]>, y: Box<[Label]>) -> Result<Self, DataError> {
+    pub fn new(x: Box<[Feature]>, y: Box<[Label]>) -> Result<Self, DataError> {
         if x.len() == 0 {
             return Err(DataError::Creation("Zero length x".to_owned()));
         }
@@ -215,7 +304,13 @@ where
             y,
         })
     }
+}
 
+impl<Feature, Label> TrainingData<Feature, Label>
+where
+    Label: HasMax + Clone + Parseable,
+    Feature: Default + Clone + Parseable,
+{
     /// Parse a text file into a `TrainingData`.
     ///
     /// Each line in the file represents a sample, with features as floats
@@ -230,32 +325,36 @@ where
     }
 
     fn parse0(path: &Path) -> Result<Self, DataError> {
-        const MAX_BUFF: usize = 0x1000;
-
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
-        let mut buf_f32: Vec<f32> = Vec::new();
-        let mut buf_f16: Vec<F16> = Vec::new();
-        let mut buf_label: Vec<Label> = Vec::new();
+        let mut feature_container = Feature::new_container();
+        let mut label_container = Label::new_container();
         let mut text = String::new();
         let mut lineno = 1usize;
 
         reader.read_line(&mut text)?;
-        parse_floats_and_label(&text, &mut buf_f32, &mut buf_label, lineno)?;
-        let n_features = buf_f32.len();
+        parse_features_and_label::<Feature, Label>(
+            &text,
+            &mut feature_container,
+            &mut label_container,
+            lineno,
+        )?;
+        let n_features = Feature::container_len(&feature_container);
 
         loop {
             lineno += 1;
-            if buf_f32.len() >= MAX_BUFF {
-                convert_all(&mut buf_f16, &mut buf_f32);
-            }
             text.clear();
             if reader.read_line(&mut text)? == 0 {
                 break;
             }
-            let orig_len = buf_f32.len();
-            parse_floats_and_label(&text, &mut buf_f32, &mut buf_label, lineno)?;
-            let new_len = buf_f32.len();
+            let orig_len = Feature::container_len(&feature_container);
+            parse_features_and_label::<Feature, Label>(
+                &text,
+                &mut feature_container,
+                &mut label_container,
+                lineno,
+            )?;
+            let new_len = Feature::container_len(&feature_container);
             if new_len - orig_len != n_features {
                 return Err(DataError::Creation(format!(
                     "Inconsistent number of features: {} or {}",
@@ -265,22 +364,22 @@ where
             }
         }
 
-        convert_all(&mut buf_f16, &mut buf_f32);
+        let features_pre = Feature::done(feature_container);
+        let labels = Label::done(label_container);
 
-        mem::drop(buf_f32);
-
-        let mut dest: Vec<F16> = vec![Default::default(); buf_f16.len()];
-        let n_samples = buf_label.len();
+        let mut dest: Vec<Feature> = vec![Default::default(); features_pre.len()];
+        let n_samples = labels.len();
 
         // transpose. This is not a cache friendly way to do this, but fine for
         // now.
         for feature in 0..n_features {
             for sample in 0..n_samples {
-                dest[feature * n_samples + sample] = buf_f16[sample * n_features + feature];
+                dest[feature * n_samples + sample] =
+                    features_pre[sample * n_features + feature].clone();
             }
         }
 
-        TrainingData::new(dest.into_boxed_slice(), buf_label.into_boxed_slice())
+        TrainingData::new(dest.into_boxed_slice(), labels)
     }
 }
 
@@ -293,37 +392,37 @@ where
     }
 }
 
-fn parse_floats(s: &str, buf: &mut Vec<f32>, lineno: usize) -> Result<(), DataError> {
+fn parse_features<Feature>(s: &str, container: &mut Feature::Container) -> Result<(), DataError>
+where
+    Feature: Parseable,
+{
     for s0 in s.split_whitespace() {
-        let x = str::parse::<f32>(s0).map_err(|_| DataError::NumberParsing(lineno))?;
-        buf.push(x);
+        Feature::parse_one(s0, container)?;
     }
     Ok(())
 }
 
-fn parse_floats_and_label<Label>(
+fn parse_features_and_label<Feature, Label>(
     s: &str,
-    buf: &mut Vec<f32>,
-    buf2: &mut Vec<Label>,
+    feature_container: &mut Feature::Container,
+    label_container: &mut Label::Container,
     lineno: usize,
 ) -> Result<(), DataError>
 where
-    Label: FromStr,
+    Feature: Parseable,
+    Label: Parseable,
 {
     let mut iter = s.split_whitespace();
     let last = match iter.next_back() {
         Some(s) => s,
-        None => return Err(DataError::NumberParsing(lineno)),
+        None => return Err(DataError::Parsing(format!("line {}", lineno))),
     };
-    let label = str::parse::<Label>(last).map_err(|_| DataError::NumberParsing(lineno))?;
-    buf2.push(label);
+    Label::parse_one(last, label_container)?;
     for s0 in iter {
-        let x = str::parse::<f32>(s0).map_err(|_| DataError::NumberParsing(lineno))?;
-        buf.push(x);
+        Feature::parse_one(s0, feature_container)?;
     }
     Ok(())
 }
-
 
 fn convert_all(dest: &mut Vec<F16>, source: &mut Vec<f32>) {
     let i = dest.len();
