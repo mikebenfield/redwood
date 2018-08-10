@@ -106,13 +106,11 @@ where
     Feature: FeatureT,
     Label: LabelT,
 {
-    let block = t.blocks()[at];
-
     let interior_height = (Bloc::INTERIOR_COUNT + 1).trailing_zeros();
 
     let mut node_index = 0;
     for _ in 0..interior_height {
-        match block.node(t, node_index) {
+        match t.blocks()[at].node(t, node_index) {
             Node::Leaf(label) => return label,
             Node::Branch {
                 threshold,
@@ -125,7 +123,7 @@ where
         }
     }
 
-    match block.node(t, node_index) {
+    match t.blocks()[at].node(t, node_index) {
         Node::Leaf(label) => return label,
         Node::Branch {
             threshold,
@@ -134,7 +132,7 @@ where
         } => {
             let go_left = sample[feature_index] < threshold;
             // we need to go to another block
-            let child_blocks = block.next_blocks();
+            let child_blocks = t.blocks()[at].next_blocks();
             let use_offset = offset + if go_left { 0 } else { 1 };
             return predict_in_block(t, sample, child_blocks + use_offset);
         }
