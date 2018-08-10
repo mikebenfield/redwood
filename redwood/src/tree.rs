@@ -1,5 +1,6 @@
 use std::f64::NEG_INFINITY;
 use std::marker::PhantomData;
+use std::mem::transmute;
 
 use rand::{Rng, XorShiftRng};
 
@@ -15,6 +16,7 @@ pub enum Node<Feature, Label> {
     Branch {
         threshold: Feature,
         feature_index: usize,
+        offset: usize,
     },
 }
 
@@ -105,30 +107,36 @@ where
     Label: LabelT,
 {
     let block = t.blocks()[at];
-    let mut node_index = 0usize;
 
-    loop {
+    let interior_height = (Bloc::INTERIOR_COUNT + 1).trailing_zeros();
+
+    let mut node_index = 0;
+    for _ in 0..interior_height {
         match block.node(t, node_index) {
             Node::Leaf(label) => return label,
             Node::Branch {
                 threshold,
                 feature_index,
+                ..
             } => {
                 let go_left = sample[feature_index] < threshold;
-                if node_index < Bloc::INTERIOR_COUNT {
-                    node_index = 2 * node_index + if go_left { 1 } else { 2 };
-                } else {
-                    // we need to go to another block
-                    let child_blocks = block.next_blocks();
-                    let mut offset = if go_left { 0 } else { 1 };
-                    for i in Bloc::INTERIOR_COUNT..node_index {
-                        if let Node::Branch { .. } = block.node(t, i) {
-                            offset += 2;
-                        }
-                    }
-                    return predict_in_block(t, sample, child_blocks + offset);
-                }
+                node_index = 2 * node_index + if go_left { 1 } else { 2 };
             }
+        }
+    }
+
+    match block.node(t, node_index) {
+        Node::Leaf(label) => return label,
+        Node::Branch {
+            threshold,
+            feature_index,
+            offset,
+        } => {
+            let go_left = sample[feature_index] < threshold;
+            // we need to go to another block
+            let child_blocks = block.next_blocks();
+            let use_offset = offset + if go_left { 0 } else { 1 };
+            return predict_in_block(t, sample, child_blocks + use_offset);
         }
     }
 }
@@ -276,7 +284,8 @@ where
         let mut block = T::Block::default();
         let mut child_blocks: Vec<T::Block> =
             Vec::with_capacity(2 * (T::Block::NODE_COUNT - T::Block::INTERIOR_COUNT));
-        self.new_node(stack, &mut block, 0, &mut child_blocks);
+        let mut current_offset = 0usize;
+        self.new_node(stack, &mut current_offset, &mut block, 0, &mut child_blocks);
         block.set_next_blocks(self.tip.blocks().len());
         for b in child_blocks.drain(..) {
             self.tip.push_block(b);
@@ -287,6 +296,7 @@ where
     fn new_node<'b>(
         &mut self,
         stack: StackData<'b>,
+        current_offset: &mut usize,
         block: &mut T::Block,
         index: usize,
         child_blocks: &mut Vec<T::Block>,
@@ -302,6 +312,7 @@ where
                     Branch {
                         threshold: bd.threshold,
                         feature_index: bd.feature,
+                        offset: *current_offset,
                     },
                 );
                 let stack_left = StackData {
@@ -317,9 +328,22 @@ where
                     depth: current_depth + 1,
                 };
                 if index < T::Block::INTERIOR_COUNT {
-                    self.new_node(stack_left, block, 2 * index + 1, child_blocks);
-                    self.new_node(stack_right, block, 2 * index + 2, child_blocks);
+                    self.new_node(
+                        stack_left,
+                        current_offset,
+                        block,
+                        2 * index + 1,
+                        child_blocks,
+                    );
+                    self.new_node(
+                        stack_right,
+                        current_offset,
+                        block,
+                        2 * index + 2,
+                        child_blocks,
+                    );
                 } else {
+                    *current_offset += 2;
                     child_blocks.push(self.new_block(stack_left));
                     child_blocks.push(self.new_block(stack_right));
                 }
@@ -544,9 +568,12 @@ impl<T> Block<T, F16, u16> for StandardBlock {
         if standard_node.threshold == F16::SPECIAL {
             Node::Leaf(standard_node.feature)
         } else {
+            let half_offset = standard_node.feature >> 13;
+            let feature = standard_node.feature & 0x1FFF;
             Node::Branch {
                 threshold: standard_node.threshold,
-                feature_index: standard_node.feature as usize,
+                feature_index: feature as usize,
+                offset: (2 * half_offset) as usize,
             }
         }
     }
@@ -568,10 +595,16 @@ impl<T> BlockMut<T, F16, u16> for StandardBlock {
             Node::Branch {
                 threshold,
                 feature_index,
-            } => StandardNode {
-                threshold,
-                feature: feature_index as u16,
-            },
+                offset,
+            } => {
+                let half_offset = (offset / 2) as u16;
+                let offset_mask = half_offset << 13;
+                let feature_mask = feature_index as u16;
+                StandardNode {
+                    threshold,
+                    feature: offset_mask | feature_mask,
+                }
+            }
         }
     }
 
@@ -653,7 +686,7 @@ const FLOAT_INTERIOR_COUNT: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct FloatNode {
-    threshold: f32,
+    threshold: u32,
     feature: u32,
 }
 
@@ -663,13 +696,15 @@ pub struct FloatBlock {
     next_blocks: u32,
 }
 
+const F32_SPECIAL: u32 = 0xFFFFFFFF;
+
 impl Default for FloatBlock {
     #[inline]
     fn default() -> Self {
         FloatBlock {
             nodes: [FloatNode {
-                threshold: 0.0,
-                feature: 0xFFFFFFFF,
+                threshold: unsafe { transmute(F32_SPECIAL) },
+                feature: 0,
             }; FLOAT_NODE_COUNT],
             next_blocks: 0,
         }
@@ -684,12 +719,16 @@ impl<T> Block<T, f32, f32> for FloatBlock {
     #[inline]
     fn node(&self, _tree: &T, i: usize) -> Node<f32, f32> {
         let float_node = self.nodes[i];
-        if float_node.feature == 0xFFFFFFFF {
-            Node::Leaf(float_node.threshold)
+        let float_node_threshold_u32: u32 = unsafe { transmute(float_node.threshold) };
+        if float_node_threshold_u32 == F32_SPECIAL {
+            Node::Leaf(unsafe { transmute(float_node.feature) })
         } else {
+            let half_offset = float_node.feature >> 29;
+            let feature = float_node.feature & 0x1FFFFFFF;
             Node::Branch {
-                threshold: float_node.threshold,
-                feature_index: float_node.feature as usize,
+                threshold: unsafe { transmute(float_node.threshold) },
+                feature_index: feature as usize,
+                offset: (2 * half_offset) as usize,
             }
         }
     }
@@ -705,16 +744,22 @@ impl<T> BlockMut<T, f32, f32> for FloatBlock {
     fn set_node(&mut self, _tree: &mut T, i: usize, n: Node<f32, f32>) {
         self.nodes[i] = match n {
             Node::Leaf(label) => FloatNode {
-                threshold: label,
-                feature: 0xFFFFFFFF,
+                threshold: F32_SPECIAL,
+                feature: unsafe { transmute(label) },
             },
             Node::Branch {
                 threshold,
                 feature_index,
-            } => FloatNode {
-                threshold,
-                feature: feature_index as u32,
-            },
+                offset,
+            } => {
+                let half_offset = (offset / 2) as u32;
+                let offset_mask = half_offset << 29;
+                let feature_mask = feature_index as u32;
+                FloatNode {
+                    threshold: unsafe { transmute(threshold) },
+                    feature: offset_mask | feature_mask,
+                }
+            }
         }
     }
 
