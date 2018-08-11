@@ -13,8 +13,8 @@ pub trait Scorer<Label> {
     /// Unsafe because `indices` must contain valid indexes into
     /// `values` and `labels`
     ///
-    /// This function exists because the Gini score would can pre-compute total
-    /// counts which can be used in subsequent score computations.
+    /// This function exists because the Gini score can pre-compute total counts
+    /// which can be used in subsequent score computations.
     unsafe fn first_score<Feature: PartialOrd + Copy>(
         &mut self,
         indices: &[u32],

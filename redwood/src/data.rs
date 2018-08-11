@@ -22,7 +22,7 @@ impl From<io::Error> for DataError {
     }
 }
 
-/// A type taht can be parsed from a string.
+/// A type that can be parsed from a string.
 ///
 /// This only exists because we handle `F16` differently: rather than parsing
 /// one at a time, we parse a lot of them as `f32` and then convert them to
