@@ -10,9 +10,10 @@ use failure::Error;
 
 use redwood::data::Parseable;
 use redwood::{
-    Combiner, Ensemble, F16, FeatureT, FloatTreeTypes, Forest, ForestConfiguration, Gini, LabelT,
-    MeanCombiner, PredictingData, ProbabilityCombiner, Scorer, StandardTreeTypes, SumOfSquares,
-    TrainingData, TreeConfiguration, TreeTypes,
+    AbsoluteDifference, Combiner, Ensemble, F32ProbabilityTreeTypes, F32RegressionTreeTypes,
+    FeatureT, Forest, ForestConfiguration, Gini, Information, LabelT, MeanCombiner, PredictingData,
+    ProbabilityCombiner, Scorer, SquaredDifference, StandardTreeTypes, TrainingData,
+    TreeConfiguration, TreeTypes,
 };
 
 fn duration_secs(duration: &Duration) -> f64 {
@@ -135,18 +136,51 @@ where
 }
 
 fn run_prob_train_predict(matches: &ArgMatches) -> Result<(), Error> {
-    let forest = train::<StandardTreeTypes, Gini>(matches)?;
-    let predictions = predict::<ProbabilityCombiner, F16, u16>(matches, &forest)?;
-    let pred_filename = matches.value_of("prediction_file").unwrap();
-    predictions.save(pred_filename)?;
+    macro_rules! run {
+        ($tree_types:ty, $scorer:ty) => {{
+            let forest = train::<$tree_types, $scorer>(matches)?;
+            let predictions = predict::<
+                ProbabilityCombiner,
+                <$tree_types as TreeTypes>::Feature,
+                <$tree_types as TreeTypes>::Label,
+            >(matches, &forest)?;
+            let pred_filename = matches.value_of("prediction_file").unwrap();
+            predictions.save(pred_filename)?;
+        }};
+    }
+
+    match (
+        matches.value_of("float_type").unwrap(),
+        matches.value_of("scorer").unwrap(),
+    ) {
+        ("f16", "gini") => run!(StandardTreeTypes, Gini),
+        ("f32", "gini") => run!(F32ProbabilityTreeTypes, Gini),
+        ("f16", "information") => run!(StandardTreeTypes, Information),
+        ("f32", "information") => run!(F32ProbabilityTreeTypes, Information),
+        _ => unreachable!(),
+    }
     Ok(())
 }
 
 fn run_regress_train_predict(matches: &ArgMatches) -> Result<(), Error> {
-    let forest = train::<FloatTreeTypes, SumOfSquares>(matches)?;
-    let predictions = predict::<MeanCombiner<f32>, f32, f32>(matches, &forest)?;
-    let pred_filename = matches.value_of("prediction_file").unwrap();
-    predictions.save(pred_filename)?;
+    macro_rules! run {
+        ($tree_types:ty, $scorer:ty) => {{
+            let forest = train::<$tree_types, $scorer>(matches)?;
+            let predictions = predict::<
+                MeanCombiner<<$tree_types as TreeTypes>::Label>,
+                <$tree_types as TreeTypes>::Feature,
+                <$tree_types as TreeTypes>::Label,
+            >(matches, &forest)?;
+            let pred_filename = matches.value_of("prediction_file").unwrap();
+            predictions.save(pred_filename)?;
+        }};
+    }
+
+    match matches.value_of("scorer").unwrap() {
+        "squared" => run!(F32RegressionTreeTypes, SquaredDifference),
+        "absolute" => run!(F32RegressionTreeTypes, AbsoluteDifference),
+        _ => unreachable!(),
+    }
     Ok(())
 }
 
@@ -276,13 +310,36 @@ fn run() -> Result<(), Error> {
                 .arg(seed_arg.clone())
                 .arg(time_arg.clone());
             add_args_predict(add_args_train(sc))
+                .arg(
+                    Arg::with_name("scorer")
+                        .long("scorer")
+                        .value_name("(gini|information)")
+                        .takes_value(true)
+                        .possible_values(&["gini", "information"])
+                        .default_value("gini"),
+                )
+                .arg(
+                    Arg::with_name("float_type")
+                        .long("float_type")
+                        .value_name("f16|f32")
+                        .takes_value(true)
+                        .possible_values(&["f16", "f32"])
+                        .default_value("f16"),
+                )
         })
         .subcommand({
             let sc = SubCommand::with_name("regress_train_predict")
                 .about("Train a forest and make a regression")
                 .arg(seed_arg.clone())
                 .arg(time_arg.clone());
-            add_args_predict(add_args_train(sc))
+            add_args_predict(add_args_train(sc)).arg(
+                Arg::with_name("scorer")
+                    .long("scorer")
+                    .value_name("(squared|absolute)")
+                    .takes_value(true)
+                    .possible_values(&["squared", "absolute"])
+                    .default_value("squared"),
+            )
         });
     let matches = app.get_matches();
 

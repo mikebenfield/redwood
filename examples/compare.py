@@ -89,6 +89,7 @@ def train_predict(args, model, prediction_f):
 
 def arg_prob_train_predict(args):
     classifier = ExtraTreesClassifier(
+        criterion='entropy',
         n_estimators=args.tree_count,
         max_features=args.split_tries,
         min_samples_split=args.min_samples_split,

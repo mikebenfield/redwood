@@ -509,6 +509,7 @@ struct StandardNode {
 const STANDARD_NODE_COUNT: usize = 15;
 const STANDARD_INTERIOR_COUNT: usize = 7;
 
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[repr(align(64))]
 pub struct StandardBlock {
@@ -579,6 +580,58 @@ impl<T> Block<T, F16, u16> for StandardBlock {
     #[inline]
     fn next_blocks(&self) -> usize {
         self.next_blocks as usize
+    }
+}
+
+impl<T> Block<T, f32, u32> for FloatBlock {
+    const NODE_COUNT: usize = FLOAT_NODE_COUNT;
+
+    const INTERIOR_COUNT: usize = FLOAT_INTERIOR_COUNT;
+
+    #[inline]
+    fn node(&self, tree: &T, i: usize) -> Node<f32, u32> {
+        use std::mem::transmute;
+        match <Self as Block<T, f32, f32>>::node(self, tree, i) {
+            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
+            Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            } => Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            },
+        }
+    }
+
+    #[inline]
+    fn next_blocks(&self) -> usize {
+        self.next_blocks as usize
+    }
+}
+
+impl<T> BlockMut<T, f32, u32> for FloatBlock {
+    #[inline]
+    fn set_node(&mut self, tree: &mut T, i: usize, n: Node<f32, u32>) {
+        let n2 = match n {
+            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
+            Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            } => Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            },
+        };
+        <Self as BlockMut<T, f32, f32>>::set_node(self, tree, i, n2);
+    }
+
+    #[inline]
+    fn set_next_blocks(&mut self, x: usize) {
+        self.next_blocks = x as u32;
     }
 }
 
@@ -767,12 +820,26 @@ impl<T> BlockMut<T, f32, f32> for FloatBlock {
     }
 }
 
-pub struct FloatTreeTypes;
+pub struct F32RegressionTreeTypes;
 
-impl TreeTypes for FloatTreeTypes {
+impl TreeTypes for F32RegressionTreeTypes {
     type Feature = f32;
 
     type Label = f32;
+
+    type Block = FloatBlock;
+
+    type TreeInProgress = SimpleTreeInProgress<FloatBlock>;
+
+    type Tree = SimpleTree<FloatBlock>;
+}
+
+pub struct F32ProbabilityTreeTypes;
+
+impl TreeTypes for F32ProbabilityTreeTypes {
+    type Feature = f32;
+
+    type Label = u32;
 
     type Block = FloatBlock;
 

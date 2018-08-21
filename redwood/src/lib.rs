@@ -15,6 +15,9 @@ pub use data::{PredictingData, TrainingData};
 pub use f16::F16;
 pub use forest::{Ensemble, Forest, ForestConfiguration};
 pub use prediction::{Combiner, MeanCombiner, ProbabilityCombiner};
-pub use score::{Gini, Scorer, SumOfSquares};
-pub use tree::{FloatTreeTypes, StandardTreeTypes, TreeConfiguration, TreeTypes};
+pub use score::{AbsoluteDifference, Gini, Information, Scorer, SquaredDifference};
+pub use tree::{
+    F32ProbabilityTreeTypes, F32RegressionTreeTypes, StandardTreeTypes, TreeConfiguration,
+    TreeTypes,
+};
 pub use types::{FeatureT, IndexT, LabelT};
