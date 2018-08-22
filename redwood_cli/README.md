@@ -1,12 +1,11 @@
 # Redwood CLI
 
-Redwood is an implementation of a Decision Forest classifier available as a Rust
-library or a command line program. It uses a compact, cache friendly format for
-speed.
+Redwood is a fast and accurate Decision Forest implementation. This crate,
+Redwood CLI, is a command line interface to Redwood.
 
 Within this directory, you can do
 ```
-cargo run --release -- train_predict --train_file FILE --test_file FILE --prediction_file FILE
+cargo run --release -- prob_train_predict --train_file FILE --test_file FILE --prediction_file FILE
 ```
 
 The train file should have one instance per row, with features separated by
@@ -16,16 +15,21 @@ The test file should be similar without the last class column.
 
 Many options are available; see them with
 ```
-cargo run --release -- train_predict --help
+cargo run --release -- prob_train_predict --help
 ```
 
 ## License
 
 Redwood is Copyright 2018, Michael Benfield.
 
-You may modify and/or distribute Redwood under the terms of either
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   http://opensource.org/licenses/MIT)
-at your option.
+Redwood is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+Redwood is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+Redwood (see the file LICENSE). If not, see <https://www.gnu.org/licenses/>.
