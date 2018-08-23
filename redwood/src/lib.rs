@@ -17,7 +17,7 @@ pub use forest::{Ensemble, Forest, ForestConfiguration};
 pub use prediction::{Combiner, MeanCombiner, ProbabilityCombiner};
 pub use score::{AbsoluteDifference, Gini, Information, Scorer, SquaredDifference};
 pub use tree::{
-    F32ProbabilityTreeTypes, F32RegressionTreeTypes, StandardTreeTypes, TreeConfiguration,
-    TreeTypes,
+    TreeConfiguration, TreeTypes, TreeTypesF16F32, TreeTypesF16U16, TreeTypesF16U32,
+    TreeTypesF32F32, TreeTypesF32U16, TreeTypesF32U32,
 };
 pub use types::{FeatureT, IndexT, LabelT};

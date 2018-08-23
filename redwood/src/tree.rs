@@ -500,33 +500,332 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-struct StandardNode {
-    threshold: F16,
-    feature: u16,
+trait Special {
+    const SPECIAL: Self;
+    fn is_special(&self) -> bool;
 }
 
-const STANDARD_NODE_COUNT: usize = 15;
-const STANDARD_INTERIOR_COUNT: usize = 7;
-
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-#[repr(align(64))]
-pub struct StandardBlock {
-    nodes: [StandardNode; STANDARD_NODE_COUNT],
-    next_blocks: u32,
+impl Special for F16 {
+    const SPECIAL: Self = F16::SPECIAL;
+    fn is_special(&self) -> bool {
+        *self == F16::SPECIAL
+    }
 }
 
-impl Default for StandardBlock {
-    #[inline]
-    fn default() -> Self {
-        StandardBlock {
-            nodes: [StandardNode {
-                threshold: F16::SPECIAL,
-                feature: 0,
-            }; STANDARD_NODE_COUNT],
-            next_blocks: 0,
+union F32U32 {
+    f: f32,
+    u: u32,
+}
+
+impl Special for f32 {
+    const SPECIAL: Self = unsafe { F32U32 { u: 0xFFFFFFFF }.f };
+    fn is_special(&self) -> bool {
+        unsafe { F32U32 { f: *self }.u == 0xFFFFFFFFu32 }
+    }
+}
+
+macro_rules! define_block_together {
+    ([$($attrs:tt)*], $node_count:expr, $interior_count:expr, $t:ident,
+     $threshold_t: ty, $feature_index_t: ty, $next_blocks_t: ty, $extract_f: expr, $create_f: expr
+    ) => {
+        $($attrs)*
+        #[derive(Clone, Copy, Debug)]
+        pub struct $t {
+            both: [($threshold_t, $feature_index_t); $node_count],
+            next_blocks: $next_blocks_t,
         }
+
+        impl Default for $t {
+            #[inline]
+            fn default() -> Self {
+                Self {
+                    both: [(<$threshold_t as Special>::SPECIAL, 0); $node_count],
+                    next_blocks: 0,
+                }
+            }
+        }
+
+        impl<T> Block<T, $threshold_t, $feature_index_t> for $t {
+            const NODE_COUNT: usize = $node_count;
+            const INTERIOR_COUNT: usize = $interior_count;
+
+            #[inline]
+            fn node(&self, _tree: &T, i: usize) -> Node<$threshold_t, $feature_index_t> {
+                let sta = self.both[i];
+                if sta.0.is_special() {
+                    Node::Leaf(sta.1)
+                } else {
+                    let (half_offset, real_feature_i) = $extract_f(sta.1);
+                    Node::Branch {
+                        threshold: sta.0,
+                        feature_index: real_feature_i as usize,
+                        offset: (2 * half_offset as usize),
+                    }
+                }
+            }
+
+            #[inline]
+            fn next_blocks(&self) -> usize {
+                self.next_blocks as usize
+            }
+        }
+
+        impl<T> BlockMut<T, $threshold_t, $feature_index_t> for $t {
+            #[inline]
+            fn set_node(
+                &mut self,
+                _tree: &mut T,
+                i: usize,
+                n: Node<$threshold_t, $feature_index_t>,
+            ) {
+                match n {
+                    Node::Leaf(label) => {
+                        self.both[i] = (<$threshold_t as Special>::SPECIAL, label);
+                    }
+                    Node::Branch {
+                        threshold,
+                        feature_index,
+                        offset,
+                    } => {
+                        let combined_feature_index = $create_f(offset, feature_index);
+                        self.both[i] = (threshold, combined_feature_index);
+                    }
+                }
+            }
+
+            fn set_next_blocks(&mut self, x: usize) {
+                self.next_blocks = x as $next_blocks_t;
+            }
+        }
+    };
+}
+
+macro_rules! define_block_sep {
+    ([$($attrs:tt)*], $node_count:expr, $interior_count:expr, $t:ident,
+     $threshold_t: ty, $feature_index_t: ty, $next_blocks_t: ty, $extract_f: expr, $create_f: expr
+    ) => {
+        $($attrs)*
+        #[derive(Clone, Copy, Debug)]
+        pub struct $t {
+            thresholds: [$threshold_t; $node_count],
+            feature_indices: [$feature_index_t; $node_count],
+            next_blocks: $next_blocks_t,
+        }
+
+        impl Default for $t {
+            #[inline]
+            fn default() -> Self {
+                Self {
+                    thresholds: [<$threshold_t as Special>::SPECIAL; $node_count],
+                    feature_indices: [0; $node_count],
+                    next_blocks: 0,
+                }
+            }
+        }
+
+        impl<T> Block<T, $threshold_t, $feature_index_t> for $t {
+            const NODE_COUNT: usize = $node_count;
+            const INTERIOR_COUNT: usize = $interior_count;
+
+            #[inline]
+            fn node(&self, _tree: &T, i: usize) -> Node<$threshold_t, $feature_index_t> {
+                let feature_i = self.feature_indices[i];
+                let threshold = self.thresholds[i];
+                if threshold.is_special() {
+                    Node::Leaf(feature_i)
+                } else {
+                    let (half_offset, real_feature_i) = $extract_f(feature_i);
+                    Node::Branch {
+                        threshold: threshold,
+                        feature_index: real_feature_i as usize,
+                        offset: (2 * half_offset as usize),
+                    }
+                }
+            }
+
+            #[inline]
+            fn next_blocks(&self) -> usize {
+                self.next_blocks as usize
+            }
+        }
+
+        impl<T> BlockMut<T, $threshold_t, $feature_index_t> for $t {
+            #[inline]
+            fn set_node(
+                &mut self,
+                _tree: &mut T,
+                i: usize,
+                n: Node<$threshold_t, $feature_index_t>,
+            ) {
+                match n {
+                    Node::Leaf(label) => {
+                        self.thresholds[i] = <$threshold_t as Special>::SPECIAL;
+                        self.feature_indices[i] = label;
+                    }
+                    Node::Branch {
+                        threshold,
+                        feature_index,
+                        offset,
+                    } => {
+                        let combined_feature_index = $create_f(offset, feature_index);
+                        self.thresholds[i] = threshold;
+                        self.feature_indices[i] = combined_feature_index;
+                    }
+                }
+            }
+
+            fn set_next_blocks(&mut self, x: usize) {
+                self.next_blocks = x as $next_blocks_t;
+            }
+        }
+    }
+}
+
+define_block_together!{[], 7, 3, Block2_2, F16, u16, u32,
+    {
+        |feature_i| (feature_i >> 14, feature_i & 0x3FFF)
+    },
+    {
+        |offset, feature_i| {
+            let half_offset = (offset / 2) as u16;
+            let offset_mask = half_offset << 14;
+            let feature_mask = feature_i as u16;
+            offset_mask | feature_mask
+        }
+    }
+}
+
+define_block_sep!{[], 7, 3, Block2_4, F16, u32, u32,
+    {
+        |feature_i| (feature_i >> 29, feature_i & 0x1FFFFFFF)
+    },
+    {
+        |offset, feature_i| {
+            let half_offset = (offset / 2) as u32;
+            let offset_mask = half_offset << 29;
+            let feature_mask = feature_i as u32;
+            offset_mask | feature_mask
+        }
+    }
+}
+
+define_block_sep!{[], 7, 3, Block4_4, f32, u32, u32,
+    {
+        |feature_i| (feature_i >> 30, feature_i & 0x3FFFFFFF)
+    },
+    {
+        |offset, feature_i| {
+            let half_offset = (offset / 2) as u32;
+            let offset_mask = half_offset << 30;
+            let feature_mask = feature_i as u32;
+            offset_mask | feature_mask
+        }
+    }
+}
+
+define_block_sep!{[], 7, 3, Block4_2, f32, u16, u32,
+    {
+        |feature_i| (feature_i >> 14, feature_i & 0x3FFF)
+    },
+    {
+        |offset, feature_i| {
+            let half_offset = (offset / 2) as u16;
+            let offset_mask = half_offset << 14;
+            let feature_mask = feature_i as u16;
+            offset_mask | feature_mask
+        }
+    }
+}
+
+impl<T> Block<T, F16, f32> for Block2_4 {
+    const NODE_COUNT: usize = 7;
+    const INTERIOR_COUNT: usize = 3;
+
+    fn node(&self, tree: &T, i: usize) -> Node<F16, f32> {
+        match <Self as Block<T, F16, u32>>::node(self, tree, i) {
+            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
+            Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            } => Node::Branch {
+                threshold: unsafe { transmute(threshold) },
+                feature_index,
+                offset,
+            },
+        }
+    }
+
+    fn next_blocks(&self) -> usize {
+        self.next_blocks as usize
+    }
+}
+
+impl<T> BlockMut<T, F16, f32> for Block2_4 {
+    fn set_node(&mut self, tree: &mut T, i: usize, n: Node<F16, f32>) {
+        let n2 = match n {
+            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
+            Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            } => Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            },
+        };
+        <Self as BlockMut<T, F16, u32>>::set_node(self, tree, i, n2);
+    }
+
+    fn set_next_blocks(&mut self, x: usize) {
+        self.next_blocks = x as u32;
+    }
+}
+
+impl<T> Block<T, f32, f32> for Block4_4 {
+    const NODE_COUNT: usize = 7;
+    const INTERIOR_COUNT: usize = 3;
+
+    fn node(&self, tree: &T, i: usize) -> Node<f32, f32> {
+        match <Self as Block<T, f32, u32>>::node(self, tree, i) {
+            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
+            Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            } => Node::Branch {
+                threshold: unsafe { transmute(threshold) },
+                feature_index,
+                offset,
+            },
+        }
+    }
+
+    fn next_blocks(&self) -> usize {
+        self.next_blocks as usize
+    }
+}
+
+impl<T> BlockMut<T, f32, f32> for Block4_4 {
+    fn set_node(&mut self, tree: &mut T, i: usize, n: Node<f32, f32>) {
+        let n2 = match n {
+            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
+            Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            } => Node::Branch {
+                threshold,
+                feature_index,
+                offset,
+            },
+        };
+        <Self as BlockMut<T, f32, u32>>::set_node(self, tree, i, n2);
+    }
+
+    fn set_next_blocks(&mut self, x: usize) {
+        self.next_blocks = x as u32;
     }
 }
 
@@ -553,115 +852,6 @@ impl<Block> Default for SimpleTree<Block> {
         Self {
             blocks: Vec::new().into_boxed_slice(),
         }
-    }
-}
-
-impl<T> Block<T, F16, u16> for StandardBlock {
-    const NODE_COUNT: usize = STANDARD_NODE_COUNT;
-
-    const INTERIOR_COUNT: usize = STANDARD_INTERIOR_COUNT;
-
-    #[inline]
-    fn node(&self, _tree: &T, i: usize) -> Node<F16, u16> {
-        let standard_node = self.nodes[i];
-        if standard_node.threshold == F16::SPECIAL {
-            Node::Leaf(standard_node.feature)
-        } else {
-            let half_offset = standard_node.feature >> 13;
-            let feature = standard_node.feature & 0x1FFF;
-            Node::Branch {
-                threshold: standard_node.threshold,
-                feature_index: feature as usize,
-                offset: (2 * half_offset) as usize,
-            }
-        }
-    }
-
-    #[inline]
-    fn next_blocks(&self) -> usize {
-        self.next_blocks as usize
-    }
-}
-
-impl<T> Block<T, f32, u32> for FloatBlock {
-    const NODE_COUNT: usize = FLOAT_NODE_COUNT;
-
-    const INTERIOR_COUNT: usize = FLOAT_INTERIOR_COUNT;
-
-    #[inline]
-    fn node(&self, tree: &T, i: usize) -> Node<f32, u32> {
-        use std::mem::transmute;
-        match <Self as Block<T, f32, f32>>::node(self, tree, i) {
-            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
-            Node::Branch {
-                threshold,
-                feature_index,
-                offset,
-            } => Node::Branch {
-                threshold,
-                feature_index,
-                offset,
-            },
-        }
-    }
-
-    #[inline]
-    fn next_blocks(&self) -> usize {
-        self.next_blocks as usize
-    }
-}
-
-impl<T> BlockMut<T, f32, u32> for FloatBlock {
-    #[inline]
-    fn set_node(&mut self, tree: &mut T, i: usize, n: Node<f32, u32>) {
-        let n2 = match n {
-            Node::Leaf(x) => Node::Leaf(unsafe { transmute(x) }),
-            Node::Branch {
-                threshold,
-                feature_index,
-                offset,
-            } => Node::Branch {
-                threshold,
-                feature_index,
-                offset,
-            },
-        };
-        <Self as BlockMut<T, f32, f32>>::set_node(self, tree, i, n2);
-    }
-
-    #[inline]
-    fn set_next_blocks(&mut self, x: usize) {
-        self.next_blocks = x as u32;
-    }
-}
-
-impl<T> BlockMut<T, F16, u16> for StandardBlock {
-    #[inline]
-    fn set_node(&mut self, _tree: &mut T, i: usize, n: Node<F16, u16>) {
-        self.nodes[i] = match n {
-            Node::Leaf(label) => StandardNode {
-                threshold: F16::SPECIAL,
-                feature: label,
-            },
-            Node::Branch {
-                threshold,
-                feature_index,
-                offset,
-            } => {
-                let half_offset = (offset / 2) as u16;
-                let offset_mask = half_offset << 13;
-                let feature_mask = feature_index as u16;
-                StandardNode {
-                    threshold,
-                    feature: offset_mask | feature_mask,
-                }
-            }
-        }
-    }
-
-    #[inline]
-    fn set_next_blocks(&mut self, x: usize) {
-        self.next_blocks = x as u32;
     }
 }
 
@@ -718,132 +908,86 @@ where
     }
 }
 
-pub struct StandardTreeTypes;
+pub struct TreeTypesF16U16;
 
-impl TreeTypes for StandardTreeTypes {
+impl TreeTypes for TreeTypesF16U16 {
     type Feature = F16;
 
     type Label = u16;
 
-    type Block = StandardBlock;
+    type Block = Block2_2;
 
-    type TreeInProgress = SimpleTreeInProgress<StandardBlock>;
+    type TreeInProgress = SimpleTreeInProgress<Block2_2>;
 
-    type Tree = SimpleTree<StandardBlock>;
+    type Tree = SimpleTree<Block2_2>;
 }
 
-const FLOAT_NODE_COUNT: usize = 7;
-const FLOAT_INTERIOR_COUNT: usize = 3;
+pub struct TreeTypesF16U32;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct FloatNode {
-    threshold: u32,
-    feature: u32,
+impl TreeTypes for TreeTypesF16U32 {
+    type Feature = F16;
+
+    type Label = u32;
+
+    type Block = Block2_4;
+
+    type TreeInProgress = SimpleTreeInProgress<Block2_4>;
+
+    type Tree = SimpleTree<Block2_4>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FloatBlock {
-    nodes: [FloatNode; FLOAT_NODE_COUNT],
-    next_blocks: u32,
-}
+pub struct TreeTypesF16F32;
 
-const F32_SPECIAL: u32 = 0xFFFFFFFF;
-
-impl Default for FloatBlock {
-    #[inline]
-    fn default() -> Self {
-        FloatBlock {
-            nodes: [FloatNode {
-                threshold: unsafe { transmute(F32_SPECIAL) },
-                feature: 0,
-            }; FLOAT_NODE_COUNT],
-            next_blocks: 0,
-        }
-    }
-}
-
-impl<T> Block<T, f32, f32> for FloatBlock {
-    const NODE_COUNT: usize = FLOAT_NODE_COUNT;
-
-    const INTERIOR_COUNT: usize = FLOAT_INTERIOR_COUNT;
-
-    #[inline]
-    fn node(&self, _tree: &T, i: usize) -> Node<f32, f32> {
-        let float_node = self.nodes[i];
-        let float_node_threshold_u32: u32 = unsafe { transmute(float_node.threshold) };
-        if float_node_threshold_u32 == F32_SPECIAL {
-            Node::Leaf(unsafe { transmute(float_node.feature) })
-        } else {
-            let half_offset = float_node.feature >> 29;
-            let feature = float_node.feature & 0x1FFFFFFF;
-            Node::Branch {
-                threshold: unsafe { transmute(float_node.threshold) },
-                feature_index: feature as usize,
-                offset: (2 * half_offset) as usize,
-            }
-        }
-    }
-
-    #[inline]
-    fn next_blocks(&self) -> usize {
-        self.next_blocks as usize
-    }
-}
-
-impl<T> BlockMut<T, f32, f32> for FloatBlock {
-    #[inline]
-    fn set_node(&mut self, _tree: &mut T, i: usize, n: Node<f32, f32>) {
-        self.nodes[i] = match n {
-            Node::Leaf(label) => FloatNode {
-                threshold: F32_SPECIAL,
-                feature: unsafe { transmute(label) },
-            },
-            Node::Branch {
-                threshold,
-                feature_index,
-                offset,
-            } => {
-                let half_offset = (offset / 2) as u32;
-                let offset_mask = half_offset << 29;
-                let feature_mask = feature_index as u32;
-                FloatNode {
-                    threshold: unsafe { transmute(threshold) },
-                    feature: offset_mask | feature_mask,
-                }
-            }
-        }
-    }
-
-    #[inline]
-    fn set_next_blocks(&mut self, x: usize) {
-        self.next_blocks = x as u32;
-    }
-}
-
-pub struct F32RegressionTreeTypes;
-
-impl TreeTypes for F32RegressionTreeTypes {
-    type Feature = f32;
+impl TreeTypes for TreeTypesF16F32 {
+    type Feature = F16;
 
     type Label = f32;
 
-    type Block = FloatBlock;
+    type Block = Block2_4;
 
-    type TreeInProgress = SimpleTreeInProgress<FloatBlock>;
+    type TreeInProgress = SimpleTreeInProgress<Block2_4>;
 
-    type Tree = SimpleTree<FloatBlock>;
+    type Tree = SimpleTree<Block2_4>;
 }
 
-pub struct F32ProbabilityTreeTypes;
+pub struct TreeTypesF32U16;
 
-impl TreeTypes for F32ProbabilityTreeTypes {
+impl TreeTypes for TreeTypesF32U16 {
+    type Feature = f32;
+
+    type Label = u16;
+
+    type Block = Block4_2;
+
+    type TreeInProgress = SimpleTreeInProgress<Block4_2>;
+
+    type Tree = SimpleTree<Block4_2>;
+}
+
+pub struct TreeTypesF32U32;
+
+impl TreeTypes for TreeTypesF32U32 {
     type Feature = f32;
 
     type Label = u32;
 
-    type Block = FloatBlock;
+    type Block = Block4_4;
 
-    type TreeInProgress = SimpleTreeInProgress<FloatBlock>;
+    type TreeInProgress = SimpleTreeInProgress<Block4_4>;
 
-    type Tree = SimpleTree<FloatBlock>;
+    type Tree = SimpleTree<Block4_4>;
+}
+
+pub struct TreeTypesF32F32;
+
+impl TreeTypes for TreeTypesF32F32 {
+    type Feature = f32;
+
+    type Label = f32;
+
+    type Block = Block4_4;
+
+    type TreeInProgress = SimpleTreeInProgress<Block4_4>;
+
+    type Tree = SimpleTree<Block4_4>;
 }

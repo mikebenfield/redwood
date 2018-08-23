@@ -10,10 +10,10 @@ use failure::Error;
 
 use redwood::data::Parseable;
 use redwood::{
-    AbsoluteDifference, Combiner, Ensemble, F32ProbabilityTreeTypes, F32RegressionTreeTypes,
-    FeatureT, Forest, ForestConfiguration, Gini, Information, LabelT, MeanCombiner, PredictingData,
-    ProbabilityCombiner, Scorer, SquaredDifference, StandardTreeTypes, TrainingData,
-    TreeConfiguration, TreeTypes,
+    AbsoluteDifference, Combiner, Ensemble, FeatureT, Forest, ForestConfiguration, Gini,
+    Information, LabelT, MeanCombiner, PredictingData, ProbabilityCombiner, Scorer,
+    SquaredDifference, TrainingData, TreeConfiguration, TreeTypes, TreeTypesF16F32,
+    TreeTypesF16U16, TreeTypesF16U32, TreeTypesF32F32, TreeTypesF32U16, TreeTypesF32U32,
 };
 
 fn duration_secs(duration: &Duration) -> f64 {
@@ -150,13 +150,18 @@ fn run_prob_train_predict(matches: &ArgMatches) -> Result<(), Error> {
     }
 
     match (
-        matches.value_of("float_type").unwrap(),
+        matches.value_of("feature_type").unwrap(),
         matches.value_of("scorer").unwrap(),
+        matches.value_of("many_features").unwrap(),
     ) {
-        ("f16", "gini") => run!(StandardTreeTypes, Gini),
-        ("f32", "gini") => run!(F32ProbabilityTreeTypes, Gini),
-        ("f16", "information") => run!(StandardTreeTypes, Information),
-        ("f32", "information") => run!(F32ProbabilityTreeTypes, Information),
+        ("f16", "gini", "false") => run!(TreeTypesF16U16, Gini),
+        ("f32", "gini", "false") => run!(TreeTypesF32U16, Gini),
+        ("f16", "information", "false") => run!(TreeTypesF16U16, Information),
+        ("f32", "information", "false") => run!(TreeTypesF32U16, Information),
+        ("f16", "gini", "true") => run!(TreeTypesF16U32, Gini),
+        ("f32", "gini", "true") => run!(TreeTypesF32U32, Gini),
+        ("f16", "information", "true") => run!(TreeTypesF16U32, Information),
+        ("f32", "information", "true") => run!(TreeTypesF32U32, Information),
         _ => unreachable!(),
     }
     Ok(())
@@ -176,9 +181,14 @@ fn run_regress_train_predict(matches: &ArgMatches) -> Result<(), Error> {
         }};
     }
 
-    match matches.value_of("scorer").unwrap() {
-        "squared" => run!(F32RegressionTreeTypes, SquaredDifference),
-        "absolute" => run!(F32RegressionTreeTypes, AbsoluteDifference),
+    match (
+        matches.value_of("feature_type").unwrap(),
+        matches.value_of("scorer").unwrap(),
+    ) {
+        ("f16", "squared") => run!(TreeTypesF16F32, SquaredDifference),
+        ("f16", "absolute") => run!(TreeTypesF16F32, AbsoluteDifference),
+        ("f32", "squared") => run!(TreeTypesF32F32, SquaredDifference),
+        ("f32", "absolute") => run!(TreeTypesF32F32, AbsoluteDifference),
         _ => unreachable!(),
     }
     Ok(())
@@ -254,6 +264,14 @@ fn add_args_train<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
                 .validator(usize_validator),
         )
         .arg(
+            Arg::with_name("feature_type")
+                .long("feature_type")
+                .value_name("f16|f32")
+                .takes_value(true)
+                .possible_values(&["f16", "f32"])
+                .default_value("f16"),
+        )
+        .arg(
             Arg::with_name("split_tries")
                 .long("split_tries")
                 .value_name("NUM")
@@ -319,12 +337,12 @@ fn run() -> Result<(), Error> {
                         .default_value("gini"),
                 )
                 .arg(
-                    Arg::with_name("float_type")
-                        .long("float_type")
-                        .value_name("f16|f32")
+                    Arg::with_name("many_features")
+                        .long("many_features")
+                        .value_name("BOOL")
                         .takes_value(true)
-                        .possible_values(&["f16", "f32"])
-                        .default_value("f16"),
+                        .possible_values(&["true", "false"])
+                        .default_value("false"),
                 )
         })
         .subcommand({
