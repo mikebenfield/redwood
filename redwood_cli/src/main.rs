@@ -31,7 +31,7 @@ where
     let time_1 = Instant::now();
     let duration = time_1.duration_since(time_0);
     if x {
-        println!("{} secs {}", duration_secs(&duration), msg);
+        println!("{:.4} secs {}", duration_secs(&duration), msg);
     }
     return result;
 }

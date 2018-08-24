@@ -1,6 +1,5 @@
 import argparse
 import pathlib
-import sys
 from time import perf_counter
 
 import numpy as np
@@ -12,6 +11,7 @@ from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 def arg_prob_generate(args):
     directory = args.directory
 
+    print("{} ".format(args.train_size + args.test_size))
     (X, y) = datasets.make_classification(
         n_samples=args.train_size + args.test_size,
         n_features=args.n_features,
@@ -71,19 +71,19 @@ def train_predict(args, model, prediction_f):
     X_train = train[:, :-1]
     y_train = train[:, -1]
     time_2 = perf_counter()
-    print('{} seconds to parse training data'.format(time_2 - time_1))
+    print('{:.4f} secs to parse training data'.format(time_2 - time_1))
 
     model.fit(X_train, y_train)
     time_3 = perf_counter()
-    print('{} seconds to train'.format(time_3 - time_2))
+    print('{:.4f} secs to train'.format(time_3 - time_2))
 
     X_test = np.loadtxt(test_path)
     time_4 = perf_counter()
-    print('{} seconds to parse testing data'.format(time_4 - time_3))
+    print('{:.4f} secs to parse testing data'.format(time_4 - time_3))
 
     y_pred = prediction_f(model, X_test)
     time_5 = perf_counter()
-    print('{} seconds to predict'.format(time_5 - time_4))
+    print('{:.4f} secs to predict'.format(time_5 - time_4))
     np.savetxt(prediction_file, y_pred, delimiter=' ', fmt='%f')
 
 
@@ -113,10 +113,10 @@ def arg_prob_evaluate(args):
     y_target = np.loadtxt(target_file)
     y_pred = np.loadtxt(pred_file)
     ll = log_loss(y_target, y_pred)
-    print('log loss: {}'.format(ll))
+    print('log loss: {:.4f}'.format(ll))
     y_pred_a = np.argmax(y_pred, axis=1)
     accuracy = accuracy_score(y_target, y_pred_a)
-    print('accuracy: {}'.format(accuracy))
+    print('accuracy: {:.4f}'.format(accuracy))
 
 
 def arg_regress_evaluate(args):
