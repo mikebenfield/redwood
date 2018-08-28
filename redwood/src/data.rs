@@ -37,7 +37,11 @@ pub trait Parseable: Sized {
 
     fn container_len(container: &Self::Container) -> usize;
 
-    fn parse_one(string: &str, container: &mut Self::Container) -> Result<(), DataError>;
+    fn parse_one(
+        string: &str,
+        container: &mut Self::Container,
+        lineno: usize,
+    ) -> Result<(), DataError>;
 
     fn done(container: Self::Container) -> Box<[Self]>;
 }
@@ -64,8 +68,13 @@ impl Parseable for F16 {
         container.vec_f16.len() + container.vec_f32.len()
     }
 
-    fn parse_one(string: &str, container: &mut F16Container) -> Result<(), DataError> {
-        let x = str::parse::<f32>(string).map_err(|_| DataError::Parsing(string.to_owned()))?;
+    fn parse_one(
+        string: &str,
+        container: &mut F16Container,
+        lineno: usize,
+    ) -> Result<(), DataError> {
+        let x = str::parse::<f32>(string)
+            .map_err(|_| DataError::Parsing(format!("Cannot parse {} (line {})", string, lineno)))?;
         container.vec_f32.push(x);
         if container.vec_f32.len() >= MAX_BUFF {
             convert_all(&mut container.vec_f16, &mut container.vec_f32);
@@ -96,8 +105,9 @@ where
         container.len()
     }
 
-    fn parse_one(string: &str, container: &mut Vec<T>) -> Result<(), DataError> {
-        let x = str::parse::<T>(string).map_err(|_| DataError::Parsing(string.to_owned()))?;
+    fn parse_one(string: &str, container: &mut Vec<T>, lineno: usize) -> Result<(), DataError> {
+        let x = str::parse::<T>(string)
+            .map_err(|_| DataError::Parsing(format!("Cannot parse {} (line {})", string, lineno)))?;
         container.push(x);
         Ok(())
     }
@@ -150,7 +160,7 @@ where
         let mut lineno = 1usize;
 
         reader.read_line(&mut text)?;
-        parse_features::<Feature>(&text, &mut container)?;
+        parse_features::<Feature>(&text, &mut container, lineno)?;
         let n_features = Feature::container_len(&container);
 
         loop {
@@ -160,7 +170,7 @@ where
                 break;
             }
             let orig_len = Feature::container_len(&container);
-            parse_features::<Feature>(&text, &mut container)?;
+            parse_features::<Feature>(&text, &mut container, lineno)?;
             let new_len = Feature::container_len(&container);
             if new_len - orig_len != n_features {
                 return Err(DataError::Creation(format!(
@@ -348,12 +358,14 @@ where
                 break;
             }
             let orig_len = Feature::container_len(&feature_container);
+
             parse_features_and_label::<Feature, Label>(
                 &text,
                 &mut feature_container,
                 &mut label_container,
                 lineno,
             )?;
+
             let new_len = Feature::container_len(&feature_container);
             if new_len - orig_len != n_features {
                 return Err(DataError::Creation(format!(
@@ -392,12 +404,16 @@ where
     }
 }
 
-fn parse_features<Feature>(s: &str, container: &mut Feature::Container) -> Result<(), DataError>
+fn parse_features<Feature>(
+    s: &str,
+    container: &mut Feature::Container,
+    lineno: usize,
+) -> Result<(), DataError>
 where
     Feature: Parseable,
 {
     for s0 in s.split_whitespace() {
-        Feature::parse_one(s0, container)?;
+        Feature::parse_one(s0, container, lineno)?;
     }
     Ok(())
 }
@@ -417,9 +433,9 @@ where
         Some(s) => s,
         None => return Err(DataError::Parsing(format!("line {}", lineno))),
     };
-    Label::parse_one(last, label_container)?;
+    Label::parse_one(last, label_container, lineno)?;
     for s0 in iter {
-        Feature::parse_one(s0, feature_container)?;
+        Feature::parse_one(s0, feature_container, lineno)?;
     }
     Ok(())
 }
