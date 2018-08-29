@@ -116,7 +116,7 @@ def arg_prob_evaluate(args):
     print('log loss: {:.4f}'.format(ll))
     y_pred_a = np.argmax(y_pred, axis=1)
     accuracy = accuracy_score(y_target, y_pred_a)
-    print('accuracy: {:.4f}'.format(accuracy))
+    print('error: {:.4f}'.format(1 - accuracy))
 
 
 def arg_regress_evaluate(args):
