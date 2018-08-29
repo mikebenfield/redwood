@@ -6,6 +6,7 @@ import numpy as np
 import sklearn.datasets as datasets
 from sklearn.metrics import log_loss, accuracy_score, mean_squared_error, mean_absolute_error
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
 
 def arg_prob_generate(args):
@@ -88,21 +89,34 @@ def train_predict(args, model, prediction_f):
 
 
 def arg_prob_train_predict(args):
-    classifier = ExtraTreesClassifier(
-        criterion='entropy',
-        n_estimators=args.tree_count,
-        max_features=args.split_tries,
-        min_samples_split=args.min_samples_split,
-        n_jobs=args.thread_count)
+    if args.forest_type == 'Extra':
+        classifier = ExtraTreesClassifier(
+            n_estimators=args.tree_count,
+            max_features=args.split_tries,
+            min_samples_split=args.min_samples_split,
+            n_jobs=args.thread_count)
+    else:
+        classifier = RandomForestClassifier(
+            n_estimators=args.tree_count,
+            max_features=args.split_tries,
+            min_samples_split=args.min_samples_split,
+            n_jobs=args.thread_count)
     train_predict(args, classifier, lambda mod, x: mod.predict_proba(x))
 
 
 def arg_regress_train_predict(args):
-    classifier = ExtraTreesRegressor(
-        n_estimators=args.tree_count,
-        max_features=args.split_tries,
-        min_samples_split=args.min_samples_split,
-        n_jobs=args.thread_count)
+    if args.forest_type == 'Extra':
+        classifier = ExtraTreesRegressor(
+            n_estimators=args.tree_count,
+            max_features=args.split_tries,
+            min_samples_split=args.min_samples_split,
+            n_jobs=args.thread_count)
+    else:
+        classifier = RandomForestRegressor(
+            n_estimators=args.tree_count,
+            max_features=args.split_tries,
+            min_samples_split=args.min_samples_split,
+            n_jobs=args.thread_count)
     train_predict(args, classifier, lambda mod, x: mod.predict(x))
 
 
@@ -112,7 +126,8 @@ def arg_prob_evaluate(args):
 
     y_target = np.loadtxt(target_file)
     y_pred = np.loadtxt(pred_file)
-    ll = log_loss(y_target, y_pred)
+    pred_labels = y_pred.shape[1]
+    ll = log_loss(y_target, y_pred, labels=np.arange(pred_labels))
     print('log loss: {:.4f}'.format(ll))
     y_pred_a = np.argmax(y_pred, axis=1)
     accuracy = accuracy_score(y_target, y_pred_a)
@@ -133,6 +148,8 @@ def arg_regress_evaluate(args):
 
 def add_train_predict_args(parser):
     parser.add_argument('--directory', required=True)
+    parser.add_argument(
+        '--forest_type', default='Extra', choices=['Extra', 'Random'])
     parser.add_argument('--prediction_file', required=True)
     parser.add_argument('--tree_count', type=int, required=True)
     parser.add_argument('--thread_count', type=int, required=True)
