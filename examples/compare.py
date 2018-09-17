@@ -12,7 +12,6 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 def arg_prob_generate(args):
     directory = args.directory
 
-    print("{} ".format(args.train_size + args.test_size))
     (X, y) = datasets.make_classification(
         n_samples=args.train_size + args.test_size,
         n_features=args.n_features,

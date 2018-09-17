@@ -7,8 +7,8 @@ Wehenkel's Extremely Randomized Trees (2008).
 
 ## Comparison with scikit-learn
 
-In my testing, Redwood gives a speedup over scikit-learn of about 1.25 for
-training, and a speedup of anywhere from 2 to 15 or more for prediction.
+Redwood gives a speedup over scikit-learn of anywhere from 1.5x to over 30x for
+both training and inference, and uses considerably less memory.
 
 There's a Python script `examples/compare.py` to use scikit-learn
 to generate an artificial dataset, to train and predict on that
@@ -16,42 +16,34 @@ dataset using scikit-learn's ExtraTreesClassifier, and to evaluate
 accuracy and log-loss of predictions. Here's an example of usage
 of this script and output on my system:
 
+
 ```
-$ python examples/compare.py generate --directory ~/Data --n_classes 32 --n_features 200
-$ python examples/compare.py train_predict --directory ~/Data --prediction_file ~/Data/sklearn.prediction --tree_count 300 --thread_count 3 --min_samples_split 2 --split_tries 15
-6.4524520129780285 seconds to parse training data
-35.01707567903213 seconds to train
-1.7524304389953613 seconds to parse testing data
-7.264293443004135 seconds to predict
-$ python examples/compare.py evaluate --target ~/Data/data.target --prediction ~/Data/sklearn.prediction
-log loss: 3.2677134066035047
-accuracy: 0.1421
-$ cargo run --release -p redwood_cli -- train_predict --train_file ~/Data/data.train --test_file ~/Data/data.test --prediction_file ~/Data/redwood.prediction --tree_count 300 --thread_count_train 3 --thread_count_predict 2 --min_samples_split 2 --split_tries 15 --time true
-    Finished release [optimized] target(s) in 0.23s
-     Running `target/release/redwood train_predict --train_file /Users/mike/Data/data.train --test_file /Users/mike/Data/data.test --prediction_file /Users/mike/Data/redwood.prediction --tree_count 300 --thread_count_train 3 --thread_count_predict 2 --min_samples_split 2 --split_tries 15 --time true`
-0.976338629 secs to parse training data
-27.431743858 secs to train
-0.22819845600000002 secs to parse testing data
-0.516376603 secs to predict
-$ cargo run --release -p redwood_cli -- train_predict --train_file ~/Data/data.train --test_file ~/Data/data.test --prediction_file ~/Data/redwood.prediction --tree_count 300 --thread_count_train 3 --thread_count_predict 2 --min_samples_split 2 --split_tries 15 --time true
-    Finished release [optimized] target(s) in 0.08s
-     Running `target/release/redwood train_predict --train_file /Users/mike/Data/data.train --test_file /Users/mike/Data/data.test --prediction_file /Users/mike/Data/redwood.prediction --tree_count 300 --thread_count_train 3 --thread_count_predict 2 --min_samples_split 2 --split_tries 15 --time true`
-0.920349831 secs to parse training data
-27.340379647 secs to train
-0.22027818000000002 secs to parse testing data
-0.519549405 secs to predict
-$ python examples/compare.py evaluate --target ~/Data/data.target --prediction ~/Data/redwood.prediction
-log loss: 3.2602520048443964
-accuracy: 0.141
+$ python examples/compare.py prob_generate --directory ~/Data --n_classes 32 --n_features 200 --train_size 200000 --test_size 20000
+$ # train and predict using Scikit-learn
+$ python examples/compare.py prob_train_predict --directory ~/Data --prediction_file ~/Data/sklearn.prediction --tree_count 200 --thread_count 3 --min_samples_split 2 --split_tries 15
+33.6624 secs to parse training data
+178.6572 secs to train
+3.3948 secs to parse testing data
+17.6838 secs to predict
+$ # train and predict using Redwood
+$ cargo run --release -p redwood_cli -- prob_train_predict --train_file ~/Data/data.train --test_file ~/Data/data.test --prediction_file ~/Data/redwood.prediction --tree_count 200 --thread_count_train 3 --thread_count_predict 3 --min_samples_split 2 --split_tries 15 --time true
+5.6292 secs to parse training data
+89.3181 secs to train
+0.5427 secs to parse testing data
+0.6000 secs to predict
+$ # evaluate Scikit-learn's predictions
+log loss: 3.2073
+error: 0.8327
+$ python examples/compare.py prob_evaluate --target ~/Data/data.target --prediction ~/Data/sklearn.prediction
+$ # evaluate Redwood's predictions
+$ python examples/compare.py prob_evaluate --target ~/Data/data.target --prediction ~/Data/redwood.prediction
+log loss: 3.2165
+error: 0.8311
 ```
 
 ## In the future
 
 - a method to save a forest for later predictions;
-
-- regression trees;
-
-- further speedups for training;
 
 - Python interface.
 
