@@ -4,8 +4,8 @@ Redwood is an implementation of a Decision Forest classifier available as a Rust
 library or a command line program. It uses a compact, cache friendly format for
 speed.
 
-The algorithm used is a modified version of that described in Geurts, Damien,
-and Wehenkel's Extremely Randomized Trees (2008).
+The algorithm used is an optimized version of that described in Geurts, Ernst,
+and Wehenkel's Extremely Randomized Trees (2006).
 
 ## License
 

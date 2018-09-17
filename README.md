@@ -2,8 +2,8 @@
 
 Redwood is a fast and accurate Decision Forest implementation.
 
-The algorithm used is essentially that described in Geurts, Damien, and
-Wehenkel's Extremely Randomized Trees (2008).
+The algorithm used is essentially that described in Geurts, Ernst, and
+Wehenkel's Extremely Randomized Trees (2006).
 
 ## Comparison with scikit-learn
 
@@ -51,9 +51,9 @@ error: 0.8311
 ## Bugs and limitations
 
 Redwood uses half precision floats, and it currently uses only the AVX2
-instructions to do so. So, you'll need an x86-64 system, you'll need `gcc` or
-`clang` as an assembler, and if you run on a system without AVX2 instructions,
-Redwood will just crash.
+instructions to do so. So, you'll need an x86-64 system, you'll need `clang` as
+an assembler, and if you run on a system without AVX2 instructions, Redwood will
+just crash.
 
 Of course, the other limitation of half precision floats is that there are only
 a few bits of precision and exponent. If your features have values above 65519,
