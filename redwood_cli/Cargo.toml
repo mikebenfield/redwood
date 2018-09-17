@@ -17,5 +17,5 @@ path = "src/main.rs"
 
 [dependencies]
 redwood = { path = "../redwood" }
-failure = "0.1.1"
-clap = "2.31"
+failure = "0.1.2"
+clap = "2.32"

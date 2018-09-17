@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::RwLock;
 
-use crossbeam_utils::scoped;
+use crossbeam_utils::thread;
 use rand::{FromEntropy, Rng, SeedableRng, XorShiftRng};
 
 use data::{PredictingData, TrainingData};
@@ -58,7 +58,7 @@ impl<Feature, Label> Ensemble<Feature, Label> {
         let combiner: RwLock<C> = RwLock::new(C::new(self.max_label(), data.sample_count()));
         let predictors_used: RwLock<PredictorInfo> = Default::default();
 
-        scoped::scope(|scope| {
+        thread::scope(|scope| {
             for _ in 0..thread_count {
                 scope.spawn(|| {
                     let mut buffer: Vec<Label> = vec![Default::default(); data.sample_count()];
@@ -189,7 +189,7 @@ impl ForestConfiguration {
             let all_indices: Vec<u32> = (0..data.sample_count() as u32).collect();
             let all_indices_r: &[u32] = &all_indices;
 
-            scoped::scope(|scope| {
+            thread::scope(|scope| {
                 for _ in 0..self.thread_count {
                     let mut rng0 = XorShiftRng::from_seed(rng.gen());
                     let mut indices: Vec<u32> = vec![0; data.sample_count()];

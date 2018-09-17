@@ -17,9 +17,9 @@ asm = []
 default = ["asm"]
 
 [dependencies]
-failure = "0.1.1"
-rand = "0.5"
-crossbeam-utils = "0.4"
+failure = "0.1.2"
+rand = "0.5.5"
+crossbeam-utils = "0.5"
 
 [build-dependencies]
 cc = "1.0.17"
