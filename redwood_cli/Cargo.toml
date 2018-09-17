@@ -2,6 +2,14 @@
 name = "redwood_cli"
 version = "0.1.0"
 authors = ["Michael Benfield <mike.benfield@gmail.com>"]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/mikebenfield/redwood"
+homepage = "https://github.com/mikebenfield/redwood"
+categories = ["algorithms", "science", "command-line-utilities"]
+description = """
+A fast decision forest command line application.
+"""
 
 [[bin]]
 name = "redwood"

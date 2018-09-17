@@ -3,6 +3,14 @@ name = "redwood"
 version = "0.1.0"
 authors = ["Michael Benfield <mike.benfield@gmail.com>"]
 build = "build.rs"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/mikebenfield/redwood"
+homepage = "https://github.com/mikebenfield/redwood"
+categories = ["algorithms", "science"]
+description = """
+A fast decision forest library.
+"""
 
 [features]
 asm = []
