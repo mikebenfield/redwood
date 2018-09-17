@@ -6,6 +6,7 @@ license = "GPL-3.0-or-later"
 readme = "README.md"
 repository = "https://github.com/mikebenfield/redwood"
 homepage = "https://github.com/mikebenfield/redwood"
+keywords = ["machine learning", "decision forest", "random forest", "classification", "regression"]
 categories = ["algorithms", "science", "command-line-utilities"]
 description = """
 A fast decision forest command line application.
